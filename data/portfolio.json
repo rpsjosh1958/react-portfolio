@@ -1,110 +1,111 @@
 {
-    "name": "Josh",
-    "headerTaglineOne": "Hello 👋 I'm Josh",
-    "headerTaglineTwo": "- graphic designer",
-    "headerTaglineThree": "& developer from Accra",
-    "headerTaglineFour": "Ghana",
-    "showCursor": true,
-    "showBlog": true,
-    "darkMode": true,
-    "showResume": true,
-    "showPodcast": true, 
-    
-  
-    "socials": [
-      {"id": "1", "title": "Github", "link": "https://github.com/rpsjosh1958"},
-      {"id": "2", "title": "LinkedIn", "link": "https://www.linkedin.com/in/chetanverma7/"},
-      {"id": "3", "title": "Twitter", "link": "https://twitter.com/realchetanverma"},
-      {"id": "4", "title": "Blog", "link": "https://blog.chetanverma.com/"},
-      {"id": "5", "title": "Email", "link": "mailto:hello@chetanverma.com"}
-    ],
-  
-  
-    "projects": [
-      {
-        "id": "1",
-        "title": "Project One Test",
-        "description": "Web Design",
-        "imageSrc": "https://images.unsplash.com/photo-1487837647815-bbc1f30cd0d2?ixlib=rb-1.2.1&ixid=MXwxMjA3fDB8MHxzZWFyY2h8Njl8fHBhc3RlbHxlbnwwfHwwfA%3D%3D&auto=format&fit=crop&w=400&q=60",
-        "url": "http://rascom.org/",
-        "category": "WordPress"
-      },
-      {
-        "id": "2",
-        "title": "Project Two Test",
-        "description": "Custom WooCommerce solution",
-        "imageSrc": "https://images.unsplash.com/photo-1487837647815-bbc1f30cd0d2?ixlib=rb-1.2.1&ixid=MXwxMjA3fDB8MHxzZWFyY2h8Njl8fHBhc3RlbHxlbnwwfHwwfA%3D%3D&auto=format&fit=crop&w=400&q=60",
-        "url": "http://mcgnad.org/",
-        "category": "WordPress"
-      }
-    ],
-  
-    "podcast": {
-      "title": "Design+Code Podcast",
-      "description": "Conversations about design and development",
-      "coverImage": "/images/podcast-cover.jpg",
-      "episodes": [
-        {
-          "id": "ep1",
-          "title": "Getting Started with Three.js",
-          "description": "Learn the basics of 3D animations on the web",
-          "date": "2023-10-15",
-          "duration": "32:18",
-          "audioFile": "/audio/episode1.mp3"
-        },
-        {
-            "id": "ep2",
-            "title": "MMF",
-            "description": "Learn the basics of 3D animations on the web",
-            "date": "2023-10-15",
-            "duration": "32:18",
-            "audioFile": "/audio/episode1.mp3"
-          },
-          {
-            "id": "ep2",
-            "title": "Getting Started with Three.js",
-            "description": "Learn the basics of 3D animations on the web",
-            "date": "2023-10-15",
-            "duration": "32:18",
-            "audioFile": "/audio/episode1.mp3"
-          }
-      ]
-    },
-  
-    "services": [
-      {
-        "id": "1",
-        "title": "Art Direction",
-        "description": "We help with the creation and development of online advertising ideas, with particular focus on their visual appearance.",
-        "icon": "/icons/art-direction.svg" 
-      }
-    ],
-  
-    "aboutpara": "I'm a multidisciplinary designer and developer based in Accra, Ghana. I specialize in creating immersive digital experiences through thoughtful design and clean code.",
+  "name": "Josh",
+  "headerTaglineOne": "Hello 👋 I'm Josh",
+  "headerTaglineTwo": "- graphic designer",
+  "headerTaglineThree": "& developer from Accra",
+  "headerTaglineFour": "Ghana",
+  "showCursor": true,
+  "showBlog": true,
+  "darkMode": true,
+  "showResume": true,
+  "showPodcast": true,
 
-  
-    "resume": {
-      "tagline": "👋 Designer & Developer",
-      "description": "I create digital experiences that blend beautiful design with solid functionality.",
-      "skills": {
-        "design": ["UI/UX", "Branding", "3D Modeling"],
-        "development": ["React", "WordPress", "Three.js"]
+  "socials": [
+    { "id": "1", "title": "Github", "link": "https://github.com/rpsjosh1958" },
+    {
+      "id": "2",
+      "title": "LinkedIn",
+      "link": "https://www.linkedin.com/in/josh-gideon-tetteh-3b2b4a241?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app"
+    },
+    { "id": "3", "title": "Twitter", "link": "https://x.com/rps_josh?s=21" },
+    { "id": "4", "title": "Pinterest", "link": "https://pin.it/2dfyNvFdR" },
+    { "id": "5", "title": "Email", "link": "mailto:tettehjosh5@gmail.com" }
+  ],
+
+  "projects": [
+    {
+      "id": "1",
+      "title": "Project One Test",
+      "description": "Web Design",
+      "imageSrc": "https://images.unsplash.com/photo-1487837647815-bbc1f30cd0d2?ixlib=rb-1.2.1&ixid=MXwxMjA3fDB8MHxzZWFyY2h8Njl8fHBhc3RlbHxlbnwwfHwwfA%3D%3D&auto=format&fit=crop&w=400&q=60",
+      "url": "http://rascom.org/",
+      "category": "WordPress"
+    },
+    {
+      "id": "2",
+      "title": "Project Two Test",
+      "description": "Custom WooCommerce solution",
+      "imageSrc": "https://images.unsplash.com/photo-1487837647815-bbc1f30cd0d2?ixlib=rb-1.2.1&ixid=MXwxMjA3fDB8MHxzZWFyY2h8Njl8fHBhc3RlbHxlbnwwfHwwfA%3D%3D&auto=format&fit=crop&w=400&q=60",
+      "url": "http://mcgnad.org/",
+      "category": "WordPress"
+    }
+  ],
+
+  "podcast": {
+    "title": "Design+Code Podcast",
+    "description": "Talking about anything and everything",
+    "coverImage": "/images/podcast-cover.jpg",
+    "episodes": [
+      {
+        "id": "ep1",
+        "title": "Getting Started with Three.js",
+        "description": "Learn the basics of 3D animations on the web",
+        "date": "2023-10-15",
+        "duration": "32:18",
+        "audioFile": "/audio/episode1.mp3"
       },
-      "experiences": [
-        {
-          "id": "1",
-          "dates": "2021 - Present",
-          "position": "Freelance Designer & Developer",
-          "bullets": [
-            "Created websites for 20+ clients",
-            "Developed custom WordPress themes"
-          ]
-        }
-      ],
-      "education": {
-        "universityName": "University of Ghana",
-        "degree": "BFA Digital Arts",
-        "dates": "2016-2020"
+      {
+        "id": "ep2",
+        "title": "MMF",
+        "description": "Learn the basics of 3D animations on the web",
+        "date": "2023-10-15",
+        "duration": "32:18",
+        "audioFile": "/audio/episode1.mp3"
+      },
+      {
+        "id": "ep2",
+        "title": "Getting Started with Three.js",
+        "description": "Learn the basics of 3D animations on the web",
+        "date": "2023-10-15",
+        "duration": "32:18",
+        "audioFile": "/audio/episode1.mp3"
       }
+    ]
+  },
+
+  "services": [
+    {
+      "id": "1",
+      "title": "Art Direction",
+      "description": "We help with the creation and development of online advertising ideas, with particular focus on their visual appearance.",
+      "icon": "/icons/art-direction.svg"
+    }
+  ],
+
+  "aboutpara": "I'm a multidisciplinary designer and developer based in Accra, Ghana. I specialize in creating immersive digital experiences through thoughtful design and clean code.",
+
+  "resume": {
+    "tagline": "👋 Designer & Developer",
+    "description": "I create digital experiences that blend beautiful design with solid functionality.",
+    "skills": {
+      "design": ["UI/UX", "Branding", "3D Modeling"],
+      "development": ["React", "WordPress", "Three.js"]
+    },
+    "experiences": [
+      {
+        "id": "1",
+        "dates": "2021 - Present",
+        "position": "Freelance Designer & Developer",
+        "bullets": [
+          "Created websites for 20+ clients",
+          "Developed custom WordPress themes"
+        ]
+      }
+    ],
+    "education": {
+      "universityName": "University of Ghana",
+      "degree": "BFA Digital Arts",
+      "dates": "2016-2020"
     }
   }
+}
