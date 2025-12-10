@@ -257,7 +257,7 @@ export default function Home() {
              onClick={() => openModal('About', <p className="text-lg">{data.aboutpara}</p>)}
           >
             <h1 className="text-xl laptop:text-2xl desktop:text-3xl laptopl:text-4xl font-bold text-gray-800 dark:text-white leading-tight">
-              Hey I'm {data.name}
+              Hey I&apos;m {data.name}
             </h1>
             <p className="text-[10px] desktop:text-xs laptopl:text-sm text-gray-500 dark:text-gray-300 mt-1 font-bold">
               Product Designer • Software Engineer • Frontend Developer
@@ -382,7 +382,7 @@ export default function Home() {
              <div>
                 <h2 className="text-sm desktop:text-base font-bold text-black dark:text-white">Project in mind?</h2>
                 <span className="text-orange-500 font-bold text-2xl desktop:text-3xl cursor-pointer hover:underline">
-                  Let's Talk
+                  Let&apos;s Talk
                 </span>
              </div>
           </BentoItem>
@@ -429,7 +429,7 @@ export default function Home() {
                </div>
                <div className="flex flex-col justify-center min-w-0">
                   <h3 className="text-black dark:text-white font-bold text-lg desktop:text-xl leading-tight truncate">RPS RECAP</h3>
-                  <p className="text-[9px] desktop:text-xs text-gray-500 dark:text-gray-300 line-clamp-1">Josh's weekly adventures.</p>
+                  <p className="text-[9px] desktop:text-xs text-gray-500 dark:text-gray-300 line-clamp-1">Josh&apos;s weekly adventures.</p>
                </div>
              </div>
 
