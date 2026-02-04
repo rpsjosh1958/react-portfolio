@@ -1,0 +1,130 @@
+[
+  {
+    "id": "mcgnad",
+    "title": "MCG NAD",
+    "description": "Methodist Church Ghana Northern Accra Diocese official website",
+    "url": "https://www.mcgnad.org/",
+    "image": "https://images.unsplash.com/photo-1438232992991-995b7058bbb3?w=800&q=80",
+    "stack": ["WordPress", "Divi", "CSS"],
+    "category": "Website",
+    "year": "2023"
+  },
+  {
+    "id": "fhanash",
+    "title": "Fhanash Bakery",
+    "description": "Online bakery shop with ordering system for fresh baked goods",
+    "url": "https://www.fhanash.com",
+    "image": "https://images.unsplash.com/photo-1509440159596-0249088772ff?w=800&q=80",
+    "stack": ["HTML", "CSS", "JavaScript"],
+    "category": "E-Commerce",
+    "year": "2024"
+  },
+  {
+    "id": "dmletting",
+    "title": "DM Letting",
+    "description": "Airbnb-style service for renting and buying properties in the UK",
+    "url": "https://dmletting.netlify.app",
+    "image": "https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80",
+    "stack": ["Next.js", "TypeScript", "Tailwind CSS", "Chakra UI", "React"],
+    "category": "Real Estate",
+    "year": "2025"
+  },
+  {
+    "id": "youthsdi",
+    "title": "Youth SDI",
+    "description": "NGO foundation promoting youth sustainable development initiatives",
+    "url": "https://youthsdi.org",
+    "image": "https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=800&q=80",
+    "stack": ["JavaScript", "Tailwind CSS", "React"],
+    "category": "NGO",
+    "year": "2025"
+  },
+  {
+    "id": "copdrop",
+    "title": "CopDrop",
+    "description": "E-commerce platform for buyers and sellers with shop and admin system. Full-stack with mobile app",
+    "url": "https://copdrop.io",
+    "image": "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=800&q=80",
+    "stack": [
+      "Next.js",
+      "Tailwind CSS",
+      "React",
+      "React Native",
+      "Expo",
+      "Firebase",
+      "Resend"
+    ],
+    "category": "E-Commerce",
+    "year": "2025"
+  },
+  {
+    "id": "restau-demo",
+    "title": "Spanish Restaurant Demo",
+    "description": "Full restaurant site with online reservation system and admin dashboard for menu and reservations management",
+    "url": "https://restau-demo.netlify.app",
+    "image": "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&q=80",
+    "stack": ["React", "JavaScript", "Tailwind CSS"],
+    "category": "Restaurant",
+    "year": "2026"
+  },
+  {
+    "id": "greenflame",
+    "title": "Green Flame Energy Solutions",
+    "description": "Turning waste into global energy solutions with Resend email integration",
+    "url": "https://greenflameenergysolutions.com/",
+    "image": "https://images.unsplash.com/photo-1473341304170-971dccb5ac1e?w=800&q=80",
+    "stack": ["React", "Next.js", "Tailwind CSS", "Resend"],
+    "category": "Energy",
+    "year": "2026"
+  },
+  {
+    "id": "spainagency",
+    "title": "Spain Agency",
+    "description": "Spanish web and brand agency serving local businesses",
+    "url": "https://spainagency.netlify.app/",
+    "image": "https://images.unsplash.com/photo-1542744094-3a31f272c490?w=800&q=80",
+    "stack": ["React", "Next.js", "Tailwind CSS", "Chakra UI"],
+    "category": "Agency",
+    "year": "2026"
+  },
+  {
+    "id": "kentscup",
+    "title": "Kents Cup",
+    "description": "Restaurant website for Kents Cup coffee shop and chicken shop",
+    "url": "https://kentscup.netlify.app/",
+    "image": "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800&q=80",
+    "stack": ["React", "Next.js", "Tailwind CSS"],
+    "category": "Restaurant",
+    "year": "2026"
+  },
+  {
+    "id": "sayaacai",
+    "title": "Saya Acai",
+    "description": "Restaurant site with Firebase backend, admin dashboard for menu, gallery, and reservations management",
+    "url": "https://sayaacai.netlify.app/",
+    "image": "https://images.unsplash.com/photo-1590301157890-4810ed352733?w=800&q=80",
+    "stack": ["React", "Next.js", "Tailwind CSS", "Firebase"],
+    "category": "Restaurant",
+    "year": "2026"
+  },
+  {
+    "id": "bijoumeals",
+    "title": "Bijou Meals",
+    "description": "Modern restaurant website for Bijou Meals",
+    "url": "https://bijoumeals.netlify.app/",
+    "image": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800&q=80",
+    "stack": ["React", "Next.js", "Tailwind CSS"],
+    "category": "Restaurant",
+    "year": "2026"
+  },
+  {
+    "id": "biz360",
+    "title": "Biz360 ERP System",
+    "description": "Enterprise resource planning web app and mobile lead for iOS and Android applications",
+    "url": "https://biz360.pscgh.com/",
+    "image": "https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80",
+    "stack": ["React", "TypeScript", "React Native", "Expo"],
+    "category": "Enterprise",
+    "year": "2024 - 2026"
+  }
+]

@@ -11,6 +11,7 @@
   "dependencies": {
     "@headlessui/react": "^1.7.17",
     "autoprefixer": "^10.4.16",
+    "framer-motion": "^12.31.0",
     "gray-matter": "^4.0.3",
     "gsap": "^3.12.2",
     "next": "^14.0.4",
@@ -19,6 +20,7 @@
     "react": "^18.2.0",
     "react-datepicker": "^4.25.0",
     "react-dom": "^18.2.0",
+    "react-icons": "^5.5.0",
     "react-markdown": "^9.0.1",
     "react-syntax-highlighter": "^15.5.0",
     "react-textarea-autosize": "^8.5.3",
