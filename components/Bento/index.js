@@ -20,6 +20,7 @@ export const BentoItem = ({ children, className, onClick }) => {
         bg-gray-100 dark:bg-[#111111] 
         border border-transparent dark:border-white/[0.1]
         flex flex-col
+        origin-center
         ${onClick ? 'cursor-pointer dark:hover:bg-[#161616]' : ''} 
         ${className}
       `}

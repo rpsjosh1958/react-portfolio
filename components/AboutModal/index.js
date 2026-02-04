@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { 
   SiReact, SiNextdotjs, SiTypescript, SiJavascript, SiNodedotjs,
-  SiTailwindcss, SiFlutter, SiFigma, SiGit, SiReactnative, SiExpo
+  SiTailwindcss, SiFlutter, SiFigma, SiGit
 } from 'react-icons/si';
 
 export default function AboutModal({ isOpen, onClose, data }) {
@@ -11,7 +11,7 @@ export default function AboutModal({ isOpen, onClose, data }) {
     { name: 'React', icon: <SiReact />, level: 95, color: 'text-[#61DAFB]' },
     { name: 'Next.js', icon: <SiNextdotjs />, level: 90, color: 'text-gray-800 dark:text-white' },
     { name: 'TypeScript', icon: <SiTypescript />, level: 85, color: 'text-[#3178C6]' },
-    { name: 'React Native', icon: <SiReactnative />, level: 88, color: 'text-[#61DAFB]' },
+    { name: 'JavaScript', icon: <SiJavascript />, level: 90, color: 'text-[#F7DF1E]' },
     { name: 'Tailwind CSS', icon: <SiTailwindcss />, level: 95, color: 'text-[#06B6D4]' },
     { name: 'Flutter', icon: <SiFlutter />, level: 75, color: 'text-[#02569B]' },
     { name: 'Node.js', icon: <SiNodedotjs />, level: 80, color: 'text-[#339933]' },
@@ -38,7 +38,7 @@ export default function AboutModal({ isOpen, onClose, data }) {
         <div className="sticky top-0 z-10 bg-gradient-to-r from-orange-500 to-pink-500 p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-3xl font-bold text-white">
-              Hey, I'm {data?.name || 'Josh'}! 👋
+              Hey, I&apos;m {data?.name || 'Josh'}! 👋
             </h2>
             <button
               onClick={onClose}
