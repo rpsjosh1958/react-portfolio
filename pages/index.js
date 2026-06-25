@@ -194,10 +194,21 @@ export default function Home({ latestPost }) {
   const [aboutModalOpen, setAboutModalOpen] = useState(false);
   const [experiencesModalOpen, setExperiencesModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState({ title: "", content: null, panelClassName: "" });
+  const [blogLoading, setBlogLoading] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    const done = () => setBlogLoading(false);
+    router.events.on('routeChangeComplete', done);
+    router.events.on('routeChangeError', done);
+    return () => {
+      router.events.off('routeChangeComplete', done);
+      router.events.off('routeChangeError', done);
+    };
+  }, [router]);
 
   const openModal = (title, content, panelClassName = "") => {
     setModalContent({ title, content, panelClassName });
@@ -379,7 +390,7 @@ export default function Home({ latestPost }) {
 
            {/* Experience MOVED to Col 3 */}
           <BentoItem
-             className="order-8 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-gray-100 dark:bg-[#0a0a0a] overflow-hidden flex flex-col justify-center gap-1.5 min-h-[120px] laptop:min-h-0"
+             className="order-8 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-gray-100 dark:bg-[#0a0a0a] overflow-hidden flex flex-col justify-center gap-1.5 min-h-[120px] laptop:min-h-0 !py-12 laptop:!py-6"
           >
             <div className="flex items-center gap-2 p-1.5 bg-white dark:bg-[#141414] rounded-xl shadow-sm">
                  <div className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center font-bold text-[9px] ring-2 ring-gray-100 dark:ring-[#0a0a0a] shrink-0">Pa</div>
@@ -422,11 +433,29 @@ export default function Home({ latestPost }) {
           {/* Blog — Latest Post */}
           <BentoItem
             className="order-4 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-[#111113] flex flex-col justify-between relative overflow-hidden group min-h-[150px] laptop:min-h-0 !p-0 cursor-pointer"
-            onClick={() => router.push('/blog')}
+            onClick={() => { setBlogLoading(true); router.push('/blog'); }}
           >
             {/* ambient glow */}
             <div className="absolute inset-0 bg-gradient-to-br from-orange-500/[0.07] to-transparent pointer-events-none" />
             <div className="absolute -bottom-6 -right-6 w-28 h-28 bg-orange-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-orange-500/20 transition-all duration-700" />
+
+            {/* loading overlay */}
+            <AnimatePresence>
+              {blogLoading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-[#111113]/80 backdrop-blur-[2px]"
+                >
+                  <svg className="animate-spin" width="20" height="20" viewBox="0 0 20 20" fill="none">
+                    <circle cx="10" cy="10" r="8" stroke="rgba(255,107,26,0.25)" strokeWidth="2" />
+                    <path d="M10 2a8 8 0 0 1 8 8" stroke="#FF6B1A" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="relative z-10 p-4 h-full flex flex-col justify-between gap-2">
               {/* pulsing badge */}
