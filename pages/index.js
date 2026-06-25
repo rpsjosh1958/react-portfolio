@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import Head from "next/head";
+import { useRouter } from "next/router";
 import { useTheme } from "next-themes";
 import { motion, AnimatePresence } from "framer-motion";
 import { BentoItem } from "../components/Bento";
@@ -8,6 +9,8 @@ import CustomLoader from "../components/Loader";
 import WorkProjectsModal from "../components/WorkProjectsModal";
 import AboutModal from "../components/AboutModal";
 import ExperiencesModal from "../components/ExperiencesModal";
+import { getAllPosts } from "../utils/api";
+import { ISOToDate } from "../utils";
 
 import data from "../data/portfolio.json";
 import { BentoItem2 } from "../components/Bento2";
@@ -181,7 +184,8 @@ const NowPlaying = () => {
   );
 };
 
-export default function Home() {
+export default function Home({ latestPost }) {
+  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -297,7 +301,7 @@ export default function Home() {
             </div>
           </BentoItem>
 
-          <BentoItem2 className="laptop:col-span-1 laptop:row-span-1 bg-transparent !p-0 border-none hover:shadow-none flex flex-col gap-2 min-h-[100px] laptop:min-h-0">
+          <BentoItem2 className="order-5 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-transparent !p-0 border-none hover:shadow-none flex flex-col gap-2 min-h-[100px] laptop:min-h-0">
              <div className="grid grid-cols-2 gap-2 h-full">
                {data.socials.slice(0, 4).map(social => (
                  <a 
@@ -313,8 +317,8 @@ export default function Home() {
              </div>
           </BentoItem2>
 
-          <BentoItem 
-             className="laptop:col-span-1 laptop:row-span-1 flex items-center justify-center bg-[#1a1a1a] dark:bg-[#0a0a0a] text-gray-300 overflow-hidden relative min-h-[150px] laptop:min-h-0"
+          <BentoItem
+             className="order-6 laptop:order-none laptop:col-span-1 laptop:row-span-1 flex items-center justify-center bg-[#1a1a1a] dark:bg-[#0a0a0a] text-gray-300 overflow-hidden relative min-h-[150px] laptop:min-h-0"
              onClick={() => openModal('What I Do', 
                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-4">
                   <div className="space-y-2">
@@ -347,8 +351,8 @@ export default function Home() {
              <h3 className="font-bold text-lg desktop:text-xl laptopl:text-2xl z-10 text-gray-700 dark:text-white">What I Do?</h3>
           </BentoItem>
 
-          <BentoItem 
-            className="laptop:col-span-1 laptop:row-span-4 p-0 overflow-hidden relative group rounded-[2rem] min-h-[500px] laptop:min-h-0"
+          <BentoItem
+            className="order-3 laptop:order-none laptop:col-span-1 laptop:row-span-4 p-0 overflow-hidden relative group rounded-[2rem] min-h-[500px] laptop:min-h-0"
             onClick={() => openModal('Profile', <img src="/images/IMG_8199.JPG" alt="Josh Profile" className="w-full rounded-xl" />)}
           >
             <img 
@@ -360,7 +364,7 @@ export default function Home() {
           </BentoItem>
 
           {/* COL 3 */}
-          <BentoItem2 className="laptop:col-span-1 laptop:row-span-1 !p-0 bg-transparent border-none hover:shadow-none min-h-[100px] laptop:min-h-0">
+          <BentoItem2 className="order-7 laptop:order-none laptop:col-span-1 laptop:row-span-1 !p-0 bg-transparent border-none hover:shadow-none min-h-[100px] laptop:min-h-0">
              <div className="grid grid-cols-2 grid-rows-1 gap-3 h-full">
                 <div className="bg-[#111] rounded-2xl flex flex-col justify-center items-center text-center p-2 border border-white/5">
                    <span className="text-2xl desktop:text-3xl laptopl:text-4xl font-bold text-white">{yearsExp}+</span>
@@ -374,27 +378,34 @@ export default function Home() {
           </BentoItem2>
 
            {/* Experience MOVED to Col 3 */}
-          <BentoItem 
-             className="laptop:col-span-1 laptop:row-span-1 bg-gray-100 dark:bg-[#0a0a0a] overflow-hidden flex flex-col justify-center gap-1.5 min-h-[120px] laptop:min-h-0"
+          <BentoItem
+             className="order-8 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-gray-100 dark:bg-[#0a0a0a] overflow-hidden flex flex-col justify-center gap-1.5 min-h-[120px] laptop:min-h-0"
           >
+            <div className="flex items-center gap-2 p-1.5 bg-white dark:bg-[#141414] rounded-xl shadow-sm">
+                 <div className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center font-bold text-[9px] ring-2 ring-gray-100 dark:ring-[#0a0a0a] shrink-0">Pa</div>
+                 <div className="min-w-0">
+                    <h4 className="font-bold text-[9px] desktop:text-[11px] laptopl:text-xs dark:text-white leading-none truncate">Mobile App Developer</h4>
+                    <p className="text-[9px] desktop:text-[11px] laptopl:text-xs text-gray-500 dark:text-gray-300 truncate mt-0.5">Affinity Africa • 2026 - Present</p>
+                 </div>
+             </div>
              <div className="flex items-center gap-2 p-1.5 bg-white dark:bg-[#141414] rounded-xl shadow-sm">
                  <div className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center font-bold text-[9px] ring-2 ring-gray-100 dark:ring-[#0a0a0a] shrink-0">Pa</div>
                  <div className="min-w-0">
                     <h4 className="font-bold text-[9px] desktop:text-[11px] laptopl:text-xs dark:text-white leading-none truncate">Frontend Engineer</h4>
-                    <p className="text-[9px] desktop:text-[11px] laptopl:text-xs text-gray-500 dark:text-gray-300 truncate mt-0.5">Pandora Software Consulting • Present</p>
+                    <p className="text-[9px] desktop:text-[11px] laptopl:text-xs text-gray-500 dark:text-gray-300 truncate mt-0.5">Pandora Software Consulting • 2024 - 2026</p>
                  </div>
              </div>
              <div className="flex items-center gap-2 p-1.5 bg-white dark:bg-[#141414] rounded-xl shadow-sm">
                  <div className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center font-bold text-[9px] ring-2 ring-gray-100 dark:ring-[#0a0a0a] shrink-0">Go</div>
                  <div className="min-w-0">
                     <h4 className="font-bold text-[9px] desktop:text-[11px] laptopl:text-xs dark:text-white leading-none truncate">Web Designer</h4>
-                    <p className="text-[9px] desktop:text-[11px] laptopl:text-xs text-gray-500 dark:text-gray-300 truncate mt-0.5">Golden Ants Technologies • Present</p>
+                    <p className="text-[9px] desktop:text-[11px] laptopl:text-xs text-gray-500 dark:text-gray-300 truncate mt-0.5">Golden Ants Technologies • 2023 - Present</p>
                  </div>
              </div>
           </BentoItem>
 
-          <BentoItem 
-            className="laptop:col-span-1 laptop:row-span-1 bg-black dark:bg-[#0a0a0a] text-white flex flex-row items-center justify-center gap-4 relative"
+          <BentoItem
+            className="order-9 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-black dark:bg-[#0a0a0a] text-white flex flex-row items-center justify-center gap-4 relative"
             onClick={() => window.location.href = `mailto:${data.email || 'tettehjosh5@gmail.com'}`}
           >
              <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center animate-bounce">
@@ -408,26 +419,60 @@ export default function Home() {
              </div>
           </BentoItem>
 
-          {/* Graphic Works */}
-          <BentoItem 
-            className="laptop:col-span-1 laptop:row-span-1 bg-slate-100 dark:bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden group min-h-[150px] laptop:min-h-0"
-            onClick={() => openModal('Graphic Works', <p className="text-center">Gallery Coming Soon... Go back and tap the Pinterest!</p>)}
+          {/* Blog — Latest Post */}
+          <BentoItem
+            className="order-4 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-[#111113] flex flex-col justify-between relative overflow-hidden group min-h-[150px] laptop:min-h-0 !p-0 cursor-pointer"
+            onClick={() => router.push('/blog')}
           >
-             <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-blue-500/10"></div>
-             <h3 className="font-bold text-lg z-10 text-gray-700 dark:text-white">Graphic Works</h3>
+            {/* ambient glow */}
+            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/[0.07] to-transparent pointer-events-none" />
+            <div className="absolute -bottom-6 -right-6 w-28 h-28 bg-orange-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-orange-500/20 transition-all duration-700" />
+
+            <div className="relative z-10 p-4 h-full flex flex-col justify-between gap-2">
+              {/* pulsing badge */}
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500" />
+                </span>
+                <span className="text-[10px] tracking-widest uppercase font-mono text-orange-500">Latest Post</span>
+              </div>
+
+              {/* title + date */}
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2, duration: 0.5 }}
+              >
+                <h3 className="text-white font-medium text-sm leading-snug line-clamp-2 group-hover:text-orange-400 transition-colors duration-300">
+                  {latestPost?.title || 'Read the blog'}
+                </h3>
+                {latestPost && (
+                  <p className="text-[11px] font-mono text-gray-600 mt-1">
+                    {ISOToDate(latestPost.date)}
+                  </p>
+                )}
+              </motion.div>
+
+              {/* footer */}
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono text-gray-600 uppercase tracking-wider group-hover:text-orange-500 transition-colors duration-300">Read →</span>
+                <span className="text-[10px] font-mono text-gray-700">Blog</span>
+              </div>
+            </div>
           </BentoItem>
 
           {/* COL 4 */}
-          <BentoItem 
-             className="laptop:col-span-1 laptop:row-span-2 bg-gray-100 dark:bg-[#0a0a0a] flex items-center justify-center p-0 min-h-[300px] laptop:min-h-0"
+          <BentoItem
+             className="order-10 laptop:order-none laptop:col-span-1 laptop:row-span-2 bg-gray-100 dark:bg-[#0a0a0a] flex items-center justify-center p-0 min-h-[300px] laptop:min-h-0"
           >
               <TechGrid />
           </BentoItem>
 
           {/* New Experimental Card / NPC Music */}
-          <BentoItem 
+          <BentoItem
              onClick={() => {}}
-             className="laptop:col-span-1 laptop:row-span-2 bg-[#1a1a1a] dark:bg-[#0a0a0a] flex flex-col items-center justify-center !p-0 overflow-hidden relative min-h-[300px] laptop:min-h-0"
+             className="order-11 laptop:order-none laptop:col-span-1 laptop:row-span-2 bg-[#1a1a1a] dark:bg-[#0a0a0a] flex flex-col items-center justify-center !p-0 overflow-hidden relative min-h-[300px] laptop:min-h-0"
           > 
              <div 
                 className="absolute inset-0 z-20 cursor-pointer" 
@@ -435,13 +480,13 @@ export default function Home() {
              />
              <iframe 
                src="https://npc.aikins.xyz/u/ysljosh" 
-               className="absolute inset-0 w-[400%] h-[400%] border-none origin-top-left scale-[0.25]" 
+               className="absolute inset-0 w-[222%] h-[222%] border-none origin-top-left scale-[0.45]" 
                title="NPC Profile"
              />
           </BentoItem>
 
-          <BentoItem 
-             className="laptop:col-span-1 laptop:row-span-1 bg-[#2D2B42] flex flex-col justify-center p-3 relative overflow-hidden group border-none gap-2 min-h-[100px] laptop:min-h-0"
+          <BentoItem
+             className="order-12 laptop:order-none laptop:col-span-1 laptop:row-span-1 bg-[#2D2B42] flex flex-col justify-center p-3 relative overflow-hidden group border-none gap-2 min-h-[100px] laptop:min-h-0"
              onClick={() => openModal('Podcast', <div className="space-y-4 text-center"><h3 className="text-2xl font-bold">RPS RECAP</h3><p>{data.podcast?.description || "Josh's weekly adventures as a young adult."}</p><div className="flex justify-center gap-4 mt-4"><button className="px-4 py-2 bg-green-500 text-white rounded-full">Spotify</button><button className="px-4 py-2 bg-purple-600 text-white rounded-full">Apple</button></div></div>)}
           > 
              <div className="flex items-center gap-3">
@@ -497,7 +542,7 @@ export default function Home() {
         data={data}
       />
 
-      {/* <ExperiencesModal 
+      {/* <ExperiencesModal
         isOpen={experiencesModalOpen}
         onClose={() => setExperiencesModalOpen(false)}
         experiences={data.resume?.experiences || []}
@@ -505,4 +550,13 @@ export default function Home() {
     </div>
     </>
   );
+}
+
+export async function getStaticProps() {
+  const posts = getAllPosts(["slug", "title", "date"]);
+  return {
+    props: {
+      latestPost: posts[0] || null,
+    },
+  };
 }

@@ -1,45 +1,90 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import ProjectCard from '../ProjectCard';
-import StackFilter from '../StackFilter';
 import projectsData from '../../data/projects-data.json';
 
-export default function WorkProjectsModal({ isOpen, onClose }) {
-  const [selectedStacks, setSelectedStacks] = useState([]);
-  const [showFilters, setShowFilters] = useState(false);
+const ACCENT = '#FF6B1A';
+const SANS = "'Space Grotesk', system-ui, sans-serif";
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
 
-  // Get all unique stacks
-  const allStacks = useMemo(() => {
-    const stacks = new Set();
-    projectsData.forEach(project => {
-      project.stack.forEach(tech => stacks.add(tech));
-    });
-    return Array.from(stacks).sort();
+const TABS = ['All', 'Featured', 'Mobile', 'Web App', 'E-Commerce', 'Website', 'Enterprise'];
+
+const TINTS = {
+  'Mobile':     ['#3a1d5e', '#7a3aa0'],
+  'Web App':    ['#0d3b4f', '#16718f'],
+  'E-Commerce': ['#5e2a12', '#b04e1d'],
+  'Website':    ['#1d2a4d', '#2f4d99'],
+  'Enterprise': ['#143d2c', '#22825a'],
+};
+
+function initials(title) {
+  const w = title.replace(/[^a-zA-Z ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (w.length >= 2) return (w[0][0] + w[1][0]).toUpperCase();
+  return (title.replace(/[^a-zA-Z]/g, '').slice(0, 2) || 'P').toUpperCase();
+}
+
+function yearNum(p) {
+  return parseInt(String(p.year).slice(0, 4), 10) || 0;
+}
+
+function Placeholder({ project, size }) {
+  const [a, b] = TINTS[project.category] || ['#2a2a30', '#3f3f49'];
+  return (
+    <div style={{
+      width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: `linear-gradient(135deg, ${a}, ${b})`,
+      fontFamily: MONO, fontWeight: 600, fontSize: size, color: 'rgba(255,255,255,0.9)',
+    }}>
+      {initials(project.title)}
+    </div>
+  );
+}
+
+export default function WorkProjectsModal({ isOpen, onClose }) {
+  const [tab, setTab] = useState('All');
+  const [selId, setSelId] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileView, setMobileView] = useState('list'); // 'list' | 'detail'
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
   }, []);
 
-  // Filter projects based on selected stacks
-  const filteredProjects = useMemo(() => {
-    if (selectedStacks.length === 0) return projectsData;
-    
-    return projectsData.filter(project =>
-      selectedStacks.some(stack => project.stack.includes(stack))
-    );
-  }, [selectedStacks]);
+  // Reset mobile view to list when modal opens
+  useEffect(() => {
+    if (isOpen) setMobileView('list');
+  }, [isOpen]);
 
-  const toggleStack = (stack) => {
-    setSelectedStacks(prev =>
-      prev.includes(stack)
-        ? prev.filter(s => s !== stack)
-        : [...prev, stack]
+  const projects = useMemo(() => {
+    return [...projectsData].sort(
+      (x, y) => (Number(!!y.featured) - Number(!!x.featured)) || (yearNum(y) - yearNum(x))
     );
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (tab === 'All') return projects;
+    if (tab === 'Featured') return projects.filter((p) => p.featured);
+    if (tab === 'Mobile') return projects.filter((p) => p.mobile || p.category === 'Mobile');
+    return projects.filter((p) => p.category === tab);
+  }, [tab, projects]);
+
+  const selected = projects.find((p) => p.id === selId) || filtered[0] || projects[0];
+
+  const changeTab = (t) => {
+    setTab(t);
+    const next =
+      t === 'All'      ? projects
+      : t === 'Featured' ? projects.filter((p) => p.featured)
+      : t === 'Mobile'   ? projects.filter((p) => p.mobile || p.category === 'Mobile')
+      : projects.filter((p) => p.category === t);
+    setSelId(next.length ? next[0].id : null);
   };
 
-  const clearAll = () => {
-    setSelectedStacks([]);
-  };
-
-  const handleProjectClick = (project) => {
-    window.open(project.url, '_blank', 'noopener,noreferrer');
+  const handleSelectProject = (id) => {
+    setSelId(id);
+    if (isMobile) setMobileView('detail');
   };
 
   if (!isOpen) return null;
@@ -48,116 +93,306 @@ export default function WorkProjectsModal({ isOpen, onClose }) {
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 50, display: 'flex',
+            alignItems: isMobile ? 'flex-end' : 'center',
+            justifyContent: 'center',
+            padding: isMobile ? 0 : 32,
+            background: 'rgba(6,6,8,0.72)', backdropFilter: 'blur(6px)',
+          }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
         >
           <motion.div
-            className="relative w-full max-w-7xl max-h-[90vh] bg-white dark:bg-[#1c1c1c] rounded-3xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-800"
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            transition={{ type: 'spring', duration: 0.5 }}
+            style={{
+              width: isMobile ? '100%' : 1180,
+              height: isMobile ? '92dvh' : 768,
+              maxWidth: '100%',
+              maxHeight: isMobile ? '92dvh' : '92vh',
+              background: '#161618',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: isMobile ? '20px 20px 0 0' : 22,
+              overflow: 'hidden',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.55)',
+              display: 'flex', flexDirection: 'column', fontFamily: SANS,
+            }}
+            initial={{ scale: isMobile ? 1 : 0.94, y: isMobile ? 40 : 0, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: isMobile ? 1 : 0.94, y: isMobile ? 40 : 0, opacity: 0 }}
+            transition={{ type: 'spring', duration: 0.45 }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div className="sticky top-0 z-10 bg-white/95 dark:bg-[#1c1c1c]/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
-                  My Work
-                </h2>
-                <button
-                  onClick={onClose}
-                  className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  aria-label="Close"
-                >
-                  <svg className="w-6 h-6 text-gray-600 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Project Count and Filter Toggle */}
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Showing {filteredProjects.length} of {projectsData.length} projects
-                </p>
-                
-                {/* Toggle Filter Button (Mobile Only) */}
-                <button
-                  onClick={() => setShowFilters(!showFilters)}
-                  className="md:hidden flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-full text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                  </svg>
-                  {showFilters ? 'Hide' : 'Show'} Filters
-                  {selectedStacks.length > 0 && (
-                    <span className="px-2 py-0.5 bg-orange-500 text-white rounded-full text-xs">
-                      {selectedStacks.length}
-                    </span>
-                  )}
-                </button>
-              </div>
-
-              {/* Stack Filter - Collapsible on Mobile */}
-              <AnimatePresence>
-                {(showFilters || window.innerWidth >= 768) && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="overflow-hidden md:!h-auto md:!opacity-100"
-                  >
-                    <StackFilter
-                      allStacks={allStacks}
-                      selectedStacks={selectedStacks}
-                      onToggleStack={toggleStack}
-                      onClearAll={clearAll}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            {/* Projects Grid */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6">
-                {filteredProjects.map((project) => (
-                  <ProjectCard
-                    key={project.id}
-                    project={project}
-                    onClick={handleProjectClick}
-                  />
-                ))}
-              </div>
-
-              {/* Empty State */}
-              {filteredProjects.length === 0 && (
-                <motion.div
-                  className="flex flex-col items-center justify-center py-20 text-center"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  <div className="text-6xl mb-4">🔍</div>
-                  <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                    No projects found
-                  </h3>
-                  <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    Try selecting different technologies
-                  </p>
+            {/* ── MOBILE DETAIL VIEW ── */}
+            {isMobile && mobileView === 'detail' && selected ? (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                {/* Mobile detail header */}
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                   <button
-                    onClick={clearAll}
-                    className="px-6 py-2 bg-orange-500 text-white rounded-full font-medium hover:bg-orange-600 transition-colors"
+                    onClick={() => setMobileView('list')}
+                    style={{ background: 'rgba(255,255,255,0.07)', border: 'none', borderRadius: 9999, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#F5F4F2', fontSize: 16, flexShrink: 0 }}
                   >
-                    Clear Filters
+                    ←
                   </button>
-                </motion.div>
-              )}
-            </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: MONO, fontSize: 10, color: ACCENT, textTransform: 'uppercase', letterSpacing: '0.12em' }}>{selected.category}</div>
+                    <div style={{ fontSize: 16, fontWeight: 500, color: '#F5F4F2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selected.title}</div>
+                  </div>
+                  <button
+                    onClick={onClose}
+                    style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 9999, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#9C9AA3', fontSize: 15, flexShrink: 0 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Mobile detail content */}
+                <div style={{ flex: 1, overflowY: 'auto' }}>
+                  {/* media */}
+                  {selected.mobile ? (
+                    <div style={{
+                      height: 260, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'radial-gradient(circle at 50% 28%, rgba(255,107,26,0.12), transparent 62%), #0E0E10',
+                    }}>
+                      <div style={{
+                        position: 'relative', width: 130, height: 240, borderRadius: 24, background: '#000',
+                        padding: 6, boxShadow: '0 20px 48px rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.12)',
+                      }}>
+                        <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', width: 38, height: 4, borderRadius: 3, background: 'rgba(255,255,255,0.22)', zIndex: 2 }} />
+                        <div style={{ width: '100%', height: '100%', borderRadius: 18, overflow: 'hidden', background: '#111' }}>
+                          {selected.image ? <img src={selected.image} alt={selected.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : <Placeholder project={selected} size={28} />}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ height: 220, flexShrink: 0, padding: '18px 18px 0', display: 'flex', flexDirection: 'column', background: '#0E0E10' }}>
+                      <div style={{ flex: 1, borderRadius: '10px 10px 0 0', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', borderBottom: 'none', display: 'flex', flexDirection: 'column', background: '#1a1a1d' }}>
+                        <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', background: '#202024', flexShrink: 0 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 9999, background: '#FF5F57' }} />
+                          <span style={{ width: 8, height: 8, borderRadius: 9999, background: '#FEBC2E' }} />
+                          <span style={{ width: 8, height: 8, borderRadius: 9999, background: '#28C840' }} />
+                          <div style={{ marginLeft: 8, flex: 1, maxWidth: 160, height: 14, borderRadius: 4, background: 'rgba(255,255,255,0.06)' }} />
+                        </div>
+                        <div style={{ flex: 1, overflow: 'hidden', background: '#111' }}>
+                          {selected.image ? <img src={selected.image} alt={selected.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : <Placeholder project={selected} size={32} />}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* info */}
+                  <div style={{ padding: '20px 20px 32px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                      <h3 style={{ fontSize: 22, color: '#F5F4F2', margin: 0, fontWeight: 500, letterSpacing: '-0.01em' }}>{selected.title}</h3>
+                      <div style={{ fontFamily: MONO, fontSize: 11, color: '#9C9AA3', border: '1px solid rgba(255,255,255,0.10)', padding: '4px 9px', borderRadius: 7, whiteSpace: 'nowrap', flexShrink: 0 }}>{selected.year}</div>
+                    </div>
+                    <p style={{ color: '#A2A0A8', fontSize: 14, lineHeight: 1.62, margin: '12px 0 0' }}>{selected.description}</p>
+                    <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', color: '#66646C', textTransform: 'uppercase', marginTop: 20 }}>Built with</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
+                      {selected.stack.map((tech) => (
+                        <span key={tech} style={{ fontFamily: MONO, fontSize: 11, color: '#C9C7CF', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', padding: '5px 10px', borderRadius: 9999 }}>{tech}</span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, marginTop: 24, flexWrap: 'wrap' }}>
+                      <a href={selected.url} target="_blank" rel="noopener noreferrer"
+                        style={{ flex: 1, minWidth: 120, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: ACCENT, color: '#15110d', fontSize: 14, fontWeight: 600, padding: '13px 20px', borderRadius: 9999, textDecoration: 'none' }}>
+                        Visit live ↗
+                      </a>
+                      {selected.github && (
+                        <a href={selected.github} target="_blank" rel="noopener noreferrer"
+                          style={{ flex: 1, minWidth: 120, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid rgba(255,255,255,0.16)', color: '#F5F4F2', padding: '13px 20px', borderRadius: 9999, textDecoration: 'none', fontSize: 14 }}>
+                          View code
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* ── DESKTOP SPLIT VIEW + MOBILE LIST VIEW ── */
+              <>
+                {/* Header */}
+                <div style={{ padding: isMobile ? '16px 18px 14px' : '24px 28px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    <div>
+                      <h2 style={{ fontSize: isMobile ? 22 : 31, color: '#F5F4F2', margin: '6px 0 0', fontWeight: 500, letterSpacing: '-0.015em' }}>
+                        Selected Works
+                      </h2>
+                      {!isMobile && (
+                        <div style={{ fontFamily: MONO, fontSize: 12, color: '#66646C', marginTop: 9 }}>
+                          {projects.length} projects&nbsp;&nbsp;·&nbsp;&nbsp;2023 – 2026&nbsp;&nbsp;·&nbsp;&nbsp;
+                          {projects.filter((p) => p.mobile).length} mobile builds
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={onClose}
+                      aria-label="Close"
+                      style={{
+                        width: 38, height: 38, borderRadius: 9999, border: '1px solid rgba(255,255,255,0.12)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#9C9AA3', cursor: 'pointer', fontSize: 17, background: 'transparent', flexShrink: 0,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Tabs — horizontal scroll on mobile */}
+                  <div style={{
+                    display: 'flex', gap: 8, marginTop: isMobile ? 14 : 18,
+                    overflowX: isMobile ? 'auto' : 'visible',
+                    flexWrap: isMobile ? 'nowrap' : 'wrap',
+                    paddingBottom: isMobile ? 2 : 0,
+                    scrollbarWidth: 'none',
+                    WebkitOverflowScrolling: 'touch',
+                  }}>
+                    {TABS.map((t) => {
+                      const active = t === tab;
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => changeTab(t)}
+                          style={{
+                            padding: '7px 14px', borderRadius: 9999, fontFamily: MONO, fontSize: 12,
+                            letterSpacing: '0.02em', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all .15s',
+                            flexShrink: 0,
+                            border: `1px solid ${active ? ACCENT : 'rgba(255,255,255,0.10)'}`,
+                            background: active ? ACCENT : 'transparent',
+                            color: active ? '#15110d' : '#9C9AA3',
+                          }}
+                        >
+                          {t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Body */}
+                <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+                  {/* LEFT / MOBILE list */}
+                  <div style={{
+                    width: isMobile ? '100%' : 362,
+                    flexShrink: 0,
+                    borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,0.07)',
+                    display: 'flex', flexDirection: 'column', minHeight: 0,
+                  }}>
+                    <div style={{ padding: '11px 16px', fontFamily: MONO, fontSize: 10.5, color: '#66646C', letterSpacing: '0.08em', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
+                      {filtered.length} PROJECTS SHOWN
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {filtered.map((p) => {
+                        const isSel = !isMobile && selected && p.id === selected.id;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => handleSelectProject(p.id)}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 14,
+                              padding: isMobile ? '13px 14px' : '11px 14px',
+                              cursor: 'pointer', borderRadius: 12, transition: 'background .15s',
+                              background: isSel ? 'rgba(255,107,26,0.12)' : 'transparent',
+                            }}
+                            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = 'rgba(255,255,255,0.045)'; }}
+                            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <div style={{ width: isMobile ? 50 : 46, height: isMobile ? 50 : 46, borderRadius: 11, overflow: 'hidden', flexShrink: 0, background: '#222226' }}>
+                              {p.image
+                                ? <img src={p.image} alt={p.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                : <Placeholder project={p} size={14} />}
+                            </div>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{
+                                fontSize: isMobile ? 16 : 15, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden',
+                                textOverflow: 'ellipsis', color: isSel ? ACCENT : '#F5F4F2',
+                              }}>
+                                {p.title}
+                              </div>
+                              <div style={{ fontFamily: MONO, fontSize: 11, color: '#66646C', marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+                                {p.featured && <span style={{ color: ACCENT }}>★</span>}
+                                <span>{p.category}</span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                              <div style={{ fontFamily: MONO, fontSize: 11, color: '#66646C' }}>{p.year}</div>
+                              {isMobile && <span style={{ color: '#444', fontSize: 14 }}>›</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* RIGHT detail — desktop only */}
+                  {!isMobile && selected && (
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#161618' }}>
+                      {selected.mobile ? (
+                        <div style={{
+                          height: 330, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'radial-gradient(circle at 50% 28%, rgba(255,107,26,0.12), transparent 62%), #0E0E10',
+                          borderBottom: '1px solid rgba(255,255,255,0.06)',
+                        }}>
+                          <div style={{
+                            position: 'relative', width: 160, height: 300, borderRadius: 28, background: '#000',
+                            padding: 7, boxShadow: '0 24px 56px rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.12)',
+                          }}>
+                            <div style={{ position: 'absolute', top: 15, left: '50%', transform: 'translateX(-50%)', width: 46, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.22)', zIndex: 2 }} />
+                            <div style={{ width: '100%', height: '100%', borderRadius: 22, overflow: 'hidden', background: '#111' }}>
+                              {selected.image ? <img src={selected.image} alt={selected.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : <Placeholder project={selected} size={34} />}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ height: 330, flexShrink: 0, padding: '26px 30px 0', display: 'flex', flexDirection: 'column', background: '#0E0E10', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div style={{ flex: 1, borderRadius: '12px 12px 0 0', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', borderBottom: 'none', display: 'flex', flexDirection: 'column', background: '#1a1a1d' }}>
+                            <div style={{ height: 34, display: 'flex', alignItems: 'center', gap: 7, padding: '0 14px', background: '#202024', flexShrink: 0 }}>
+                              <span style={{ width: 10, height: 10, borderRadius: 9999, background: '#FF5F57' }} />
+                              <span style={{ width: 10, height: 10, borderRadius: 9999, background: '#FEBC2E' }} />
+                              <span style={{ width: 10, height: 10, borderRadius: 9999, background: '#28C840' }} />
+                              <div style={{ marginLeft: 12, flex: 1, maxWidth: 260, height: 18, borderRadius: 6, background: 'rgba(255,255,255,0.06)' }} />
+                            </div>
+                            <div style={{ flex: 1, overflow: 'hidden', background: '#111' }}>
+                              {selected.image ? <img src={selected.image} alt={selected.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : <Placeholder project={selected} size={40} />}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 30px 28px' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: ACCENT }}>{selected.category}</div>
+                            <h3 style={{ fontSize: 26, color: '#F5F4F2', margin: '6px 0 0', fontWeight: 500, letterSpacing: '-0.01em' }}>{selected.title}</h3>
+                          </div>
+                          <div style={{ fontFamily: MONO, fontSize: 12, color: '#9C9AA3', border: '1px solid rgba(255,255,255,0.10)', padding: '5px 10px', borderRadius: 8, whiteSpace: 'nowrap', flexShrink: 0 }}>{selected.year}</div>
+                        </div>
+                        <p style={{ color: '#A2A0A8', fontSize: 14.5, lineHeight: 1.62, margin: '15px 0 0', maxWidth: '54ch' }}>{selected.description}</p>
+                        <div style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.1em', color: '#66646C', textTransform: 'uppercase', marginTop: 24 }}>Built with</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 11 }}>
+                          {selected.stack.map((tech) => (
+                            <span key={tech} style={{ fontFamily: MONO, fontSize: 11.5, color: '#C9C7CF', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', padding: '6px 11px', borderRadius: 9999 }}>{tech}</span>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
+                          <a href={selected.url} target="_blank" rel="noopener noreferrer"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: ACCENT, color: '#15110d', fontSize: 14, fontWeight: 600, padding: '11px 21px', borderRadius: 9999, textDecoration: 'none' }}>
+                            Visit live ↗
+                          </a>
+                          {selected.github && (
+                            <a href={selected.github} target="_blank" rel="noopener noreferrer"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid rgba(255,255,255,0.16)', color: '#F5F4F2', padding: '11px 21px', borderRadius: 9999, textDecoration: 'none', fontSize: 14 }}>
+                              View code
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </motion.div>
         </motion.div>
       )}
