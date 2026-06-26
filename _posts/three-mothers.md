@@ -23,7 +23,7 @@ One night, I tried to stay up for her but ended up crashing out. In the middle o
 
 Now, let's be honest: I wasn't some perfectly behaved, holy kid. I had my fair share of mischief. I distinctly remember stealing chewing gum from my uncle's car right before he dropped me off at school. Another time, I was outside trying to use a cutlass to remove some weeds, and accidentally burst a water pipe. Yeah... I was busted.
 
-While all this beautiful chaos was happening, my biological parents were still in the US. At the time, I didn't really know them. We'd speak on the phone, but to me, they were "Uncle T" and "Auntie BB." Whenever Mummy traveled overseas and came back, she'd bring tons of toys and clothes, saying, "Your mother said I should give this to you." I'd jump on the phone, say thank you, and go right back to playing. Life was good. I was a kid, and I was happy.
+While all this beautiful chaos was happening, my adoptive parents were still in the US. At the time, I didn't really know them. We'd speak on the phone, but to me, they were "Uncle T" and "Auntie BB." Whenever Mummy traveled overseas and came back, she'd bring tons of toys and clothes, saying, "Your mother said I should give this to you." I'd jump on the phone, say thank you, and go right back to playing. Life was good. I was a kid, and I was happy.
 
 But then, the blueprint started to change.
 
