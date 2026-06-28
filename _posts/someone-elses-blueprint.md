@@ -1,0 +1,46 @@
+---
+date: '2026-06-26T03:00:00.000Z'
+title: "Someone Else's Blueprint"
+chapter: 7
+tagline: A hectic, rushed journey of satisfying someone else's rigid blueprint.
+preview: >-
+  My educational path has been anything but conventional. It all started back
+  at Danem when I was about six years old — and it never really slowed down
+  from there.
+image: ''
+tag: Personal
+---
+
+My educational path has been anything but conventional. It all started back at Danem when I was about six years old. I moved steadily from grade one through grade five, but it was in grade six that everything flipped upside down because of that phone incident. My parents felt the school handled it poorly — especially since the administrators framed it as me "taking" the money rather than stealing it, which only made my parents angrier.
+
+That pushed me out of Danem and straight into Crown and Glory School. To get in, I had to write an entrance exam, and since their curriculum was more advanced, they placed me back into grade five. I didn't mind the fresh start. Crown and Glory ran a strict streaming system: classes were divided into A, B, and C streams. The A stream was for the high achievers scoring between 80 and 100, B was for the average students, and C was for the bottom tier. I started out in the C stream, but I knew what I was capable of. By the next semester, I pushed my way up to the B stream. I stayed in B for three terms a year until I finally hit my first year of Junior High School (JHS 1), which is when I finally earned my spot in the A class.
+
+I was working my absolute hardest in that A class, but the timeline was about to shift again. My dad had always planned for me to write my B.E.C.E early because he felt my former peers at Danem were moving ahead of me. So, just as I settled into the top stream, I had to pack up and switch schools yet again to sit for the B.E.C.E. I ended up writing the exams a full two years ahead of my classmates at Crown and Glory, and a year ahead of my old friends at Danem. It was a chaotic, high-pressure rush where everything felt like a blur, but I managed to get through it. Amidst all that moving around, I made incredible friends across all three schools who made the madness worth it.
+
+Next came high school. I went to Accra Academy, where I was placed in the Science class. Honestly, I don't think I ever actually wanted to study science, but my dad chose my course for me, so I just went along with it. The only real choice I got to make was picking my elective: it was a toss-up between Geography and Elective ICT. Obviously, I chose ICT. If I had done a little more research back then, I probably would have chosen General Arts instead; I ended up wasting years drowning in chemistry and physics when I didn't really care for them.
+
+Because of how fast I was being pushed through the system, I even wrote the Nov/Dec (private WASSCE exams) during my second year of high school. I was completely average and barely scraped by, but I wrote it anyway.
+
+Then came university: Kwame Nkrumah University of Science and Technology (KNUST). Going to school in Kumasi meant I was finally far, far away from home, which brought a whole new level of freedom. But once again, the course wasn't my choice. My dad handled the applications, and I found myself enrolled in a BSc in Telecommunications Engineering.
+
+I'll never forget my very first day. My dad took me to Kumasi with the STC bus, dropped me off outside my hostel, and just... left. He didn't check me in, he didn't see my room, and he had no idea where I was sleeping. His excuse was that he had to rush back to the bus terminal to catch an early ride back to Accra. That was the only time he ever set foot on my campus during my entire three years of university. That first day was my absolute worst. I got to the hostel around 2pm and wasn't attended to until around 8pm. I misplaced the first bundle of monthly allowance my dad had given me. Luckily I had extra money stored in my suitcase.
+
+Later that night, I had to go on campus to meet my friends from high school who had also come to KNUST. And then my first birthday at school. My iPhone 7 got damaged on a Saturday during orientation — my birthday was the very next day, Sunday. I took the phone to a repairer on Saturday and he told me to come back Monday. I was so broke I had to sleep at my friend's place on campus that Sunday. No temporary phone. No calls. Nothing. I ate beans and plantain that day. On Monday morning I went to collect my phone, turned it on, and had missed calls from my auntie — she'd sent me money. I think I cried when I got back to my hostel. It was a crazy experience. It might be one of the reasons I'm not really enthusiastic about my birthday. It's been shitty for me.
+
+University also gave me a wild taste of independence — a lot of exploring, late-night visits, and things I won't fully unpack here. Let's just say that by my final year, I was sharing a room with two other guys. We'd go to bed with three of us in the room and wake up with four, because I'd snuck someone over at 3:00 a.m. while my roommates were fast asleep.
+
+But while the lifestyle was free, the engineering course was a brutal reminder of reality. I ended up failing some subjects and having to write resets. I hid it from my dad, telling him it was just a single course with four separate parts to it, when it was actually four completely different failed classes. Three of them made sense, but for one I was given a 5 out of 100. When I called the lecturer, he claimed I never attended class and that he couldn't find any of my assessments — even though I only missed a lecture once in a while. The timing of the resets was punishing too: I went on a vacation trip to Keta in the Volta Region with my family, came back on a Sunday, and had to be right back at school on Monday morning to write them.
+
+On top of the academic stress, I had a massive falling out with a close friend named Brown over a girl named Esther. I had dated Esther for about two years, and after we broke up, we tried to remain good friends. Brown eventually pursued her, which I told him was fine, but things got messy through a side hustle we ran together. Brown organized a popular student event called Palm Friday, where he sold palm wine while students hung out, played games, and listened to music. I was the one designing all the flyers and branding for it.
+
+In the beginning it was smooth, but eventually the payments became wildly inconsistent. As a contractor just doing the design work, the fact that he was with my ex and messing with my money completely pissed me off. On the last day of school, I went to say goodbye to Esther since it was the last time we'd see each other. Brown had already traveled home early, but he found out I visited her while he was away. We haven't spoken a single word to each other since, despite taking the exact same courses, sharing the same classes, and riding the same buses.
+
+Since I wasn't passionate about engineering, I ran that design hustle and made custom stickers on the side to make extra cash. I partnered with a friend at first, but he dropped out, leaving me to run the whole show. I would design flyers, logos, and custom stickers and ship them out to students at Legon, UPSA, and Cape Coast.
+
+By my final year (400 level), reality hit me hard. I realized that if I didn't figure out a serious career path fast, I was going to graduate without a job. That's when a friend of mine named John, who was studying Computer Science, showed me the way. He gave me a roadmap and told me exactly what steps to take: learn HTML and CSS, then JavaScript. He challenged me to recreate the YouTube webpage using only code.
+
+I started learning from scratch on an app called SoloLearn, and later moved to CodeCademy to master JavaScript, picked up animations, and dug into tech. Because of this focus, I completely dialed back on the lifestyle — I reduced the partying, stayed in my room alone, got high sometimes just to sleep, watched movies, and poured everything into coding. There were times in uni I never had a laptop, and guess who came to rescue me — my auntie. She gave me about two laptops across my entire time at university.
+
+Looking back, my educational path was a hectic, rushed journey of satisfying someone else's rigid blueprint. A lot of the formal schooling felt like a massive waste of time because the engineering I spent years studying has nothing to do with the actual frontend and mobile development work I do today. But it taught me how to hustle, how to pivot, and how to build a path entirely on my own terms.
+
+Today the job I do is a result of my own initiative. The telecom I spent years trying to learn and understand is of no use to me today. I always thank God he shifted my focus early. He always knows best.
