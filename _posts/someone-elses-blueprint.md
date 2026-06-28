@@ -1,6 +1,6 @@
 ---
 date: '2026-06-26T03:00:00.000Z'
-title: "Someone Else's Blueprint"
+title: "Someone Else's Blueprint (Academic Walkthrough)"
 chapter: 7
 tagline: A hectic, rushed journey of satisfying someone else's rigid blueprint.
 preview: >-
