@@ -1,6 +1,6 @@
 ---
 date: '2026-06-25T01:00:00.000Z'
-title: 'Before the Chaos: Ice Cream, UCMAS, and Life at Danem'
+title: 'Before the Chaos'
 chapter: 2
 tagline: Where the foundation was set.
 preview: >-
