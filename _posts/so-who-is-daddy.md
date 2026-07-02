@@ -91,3 +91,5 @@ There might be more to say, but for now, this is just my idea of him.
 I don't say this so you hate him or anything. As I said — if you do know my dad and you like him, that's very fine. I can see that side of him.
 
 Maybe I'm the problem.
+
+I'm just 24 writing this. Maybe i don't understand. Maybe I might understand in future and it'll make sense. But for now...
