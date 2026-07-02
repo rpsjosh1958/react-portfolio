@@ -4,7 +4,7 @@ title: 'Head of the house'
 chapter: 8
 tagline: Maybe I'm the problem.
 preview: >-
-  My dad is a proessor, a ship captain and a pastor. But let's talk about the father side of him.
+  My dad is a professor, a ship captain and a pastor. But let's talk about the father side of him.
   Well, he's not your regular father. That's all I'll say.
 image: ''
 tag: Personal
