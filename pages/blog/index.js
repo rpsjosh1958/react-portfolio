@@ -140,7 +140,7 @@ function ListIcon({ active }) {
 export default function Blog({ posts }) {
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState('oldest');
-  const [activeTag, setActiveTag] = useState('All');
+  const [activeTag, setActiveTag] = useState('Personal');
 
   const tags = useMemo(() => {
     const all = posts.flatMap(p => (p.tag ? [p.tag] : []));
