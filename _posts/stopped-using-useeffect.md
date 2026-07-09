@@ -4,38 +4,40 @@ title: "I Stopped Using useEffect for Data Fetching, and My React App Finally Fe
 tagline: Stop syncing. Start deriving.
 preview: >-
   We've all been there. You start a React project, and useEffect feels like the
-  Swiss Army Knife of hooks. But as my project grew, that Swiss Army Knife
+  BOSS of hooks. But as my project grew, that BOSS
   started feeling more like a ticking time bomb.
 image: ''
 tag: Tech
 ---
 
-We've all been there. You start a React project, and `useEffect` feels like the Swiss Army Knife of hooks. Need to fetch data? `useEffect`. Need to sync state? `useEffect`. Need to update local storage? `useEffect`.
+We've all been there. You start a React project, and `useEffect` feels like the "boss" of hooks. Need to fetch data? `useEffect`. Need to sync state? `useEffect`. Need to update local storage? `useEffect`.
 
-But as my project, **Influencer Drop**, grew across Mobile (Expo) and Web (Next.js), that Swiss Army Knife started feeling more like a ticking time bomb.
+But as my project, **THE DROP**, grew across Mobile (Expo) and Web (Next.js), that "boss" started feeling more like a ticking time bomb. I was spending more time debugging weird re-renders and stale data than actually building features.
 
-After seeing the "Don't use useEffect" movement trending on X and deep-diving into the React docs' "You Might Not Need an Effect" section, I decided to perform a radical refactor.
+Then I went down a rabbit hole — the "Don't use useEffect" movement was all over X, and the React docs' "You Might Not Need an Effect" section basically slapped me in the face. So I did something drastic and refactored the whole thing.
 
-Here is how I deleted dozens of `useEffect` hooks and what happened to my app's performance and stability.
+Here's what happened.
 
 ---
 
-## 1. The Problem: "Effect Hell"
+## 1. The Problem: "Effect Hell" 
 
-Before the refactor, my `VendorContext` and Admin pages were a mess of:
+Honestly? My codebase was a mess. `VendorContext` and the Admin pages were drowning in patterns like:
 
-- **Manual loading states:** `const [loading, setLoading] = useState(true);`
-- **Race conditions:** If a user switched tabs quickly, the wrong data might resolve.
-- **Double-renders:** React 18's Strict Mode would fire the effect twice, leading to double API calls.
-- **Fragile dependency arrays:** Forgetting one variable led to stale data; adding too many led to infinite loops.
+- **Manual loading states:** `const [loading, setLoading] = useState(true);` — everywhere.
+- **Race conditions:** User switches tabs fast, wrong data resolves. Classic.
+- **Double-renders:** React 18's Strict Mode fires effects twice in dev. Double API calls. Fun times.
+- **The dependency array nightmare:** Miss one variable → stale data. Add too many → infinite loop. There's no winning.
 
-## 2. The Solution: The "Hardening" Stack
+At some point I realised I was writing more code to manage the side effects of my side effects. That's when I knew something had to change.
 
-I moved to a three-pillar architecture:
+## 2. What I Switched To 
 
-1. **TanStack Query (React Query):** For all server state (Firestore).
-2. **Derived State:** Computing values inline or via `useMemo` instead of syncing state-to-state.
-3. **Event-Driven Side Effects:** Moving logic (like updating LocalStorage or Firebase) directly into `onPress` or `onClick` handlers.
+I landed on three things that basically replaced 80% of my `useEffect` usage:
+
+1. **TanStack Query (React Query):** Handles all server state — Firestore fetches, caching, background refetching, the lot.
+2. **Derived State:** Instead of syncing one state into another with an effect, just compute it inline or with `useMemo`. Simple.
+3. **Event Handlers for Side Effects:** If something should happen *because the user did something*, put it in the click/press handler. Not in an effect that watches state.
 
 ---
 
@@ -43,48 +45,183 @@ I moved to a three-pillar architecture:
 
 ### A. Data Fetching (Web Admin)
 
-**Before:** Manual `onSnapshot` inside a `useEffect`. It felt "real-time" but was expensive and hard to cache.
+This is the admin nav badge — it shows unread complaint/order counts in real time.
 
-**After:** Moved to `useQuery`. Now, when I navigate from **Products** to **Orders** and back, the data is **instantly there** from the cache. No more "Loading..." flickers.
+**Before:** Manual `onSnapshot` inside a `useEffect`. Looked clean until it didn't.
 
-### B. Cart Persistence (Mobile)
+```tsx
+// Before — useEffect + onSnapshot
+export function AdminNavBadge({ type }: { type: "complaints" | "orders" }) {
+  const { storeId } = useAdminStore();
+  const [count, setCount] = useState(0);
 
-**Before:** A `useEffect` watched the `items` array and saved to `AsyncStorage` whenever it changed.
+  useEffect(() => {
+    if (!storeId) return;
 
-**After:** I moved the storage logic into the `addToCart` and `removeFromCart` functions.
+    const q = query(
+      collection(db, "stores", storeId, type),
+      where("status", "in", ["unread", "paid", "open"])
+    );
 
-**Why?** The effect was reactive and "magical," but the event handler is **explicit and predictable**. I know exactly when the disk is being written to.
+    // Manual subscription — easy to forget cleanup
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setCount(snapshot.size);
+    });
 
-### C. Complex Forms (Product Variants)
+    return () => unsubscribe(); // Miss this once and you have a memory leak
+  }, [storeId, type]); // Fragile dep array
 
-**Before:** An effect automatically generated 20+ variants when a user typed a price. It was slow and prone to overwriting user edits.
+  if (count === 0) return null;
+  return <span className="badge">{count}</span>;
+}
+```
 
-**After:** I added a "Sync Inventory" button.
+**After:** Swapped it for `useQuery`. Now when I navigate from Products to Orders and back, the data is already there — no flicker, no spinner, instant.
 
-**Lesson:** Complex synchronization should often be **user-initiated**, not automatic. It puts the user in control.
+```tsx
+// After — useQuery
+export function AdminNavBadge({ type }: { type: "complaints" | "orders" }) {
+  const { storeId } = useAdminStore();
+
+  const { data: count = 0 } = useQuery({
+    queryKey: ["badge", storeId, type],
+    queryFn: async () => {
+      const q = query(
+        collection(db, "stores", storeId!, type),
+        where("status", "in", ["unread", "paid", "open"])
+      );
+      const snap = await getDocs(q);
+      return snap.size;
+    },
+    enabled: !!storeId,
+    staleTime: 1000 * 30, // Cache for 30 seconds
+  });
+
+  if (count === 0) return null;
+  return <span className="badge">{count}</span>;
+}
+```
+
+No manual cleanup. No dependency arrays. No memory leaks. TanStack just handles it.
 
 ---
 
-## 4. The Results
+### B. Cart Persistence (Mobile)
 
-- **Speed:** Navigation feels native. Because TanStack Query caches data, the UI responds before the network even starts.
-- **Code Deletion:** I removed hundreds of lines of boilerplate (`isLoading`, `isError`, `data`, `useEffect` cleanup).
-- **Stability:** Race conditions are gone. TanStack Query handles the "ignore old requests" logic out of the box.
-- **Debugging:** Using the TanStack DevTools, I can see exactly what data is stale and why.
+**Before:** A `useEffect` watched the `items` array and wrote to `AsyncStorage` every time it changed. Sounds fine — until you realise it fires on *every render* that touches cart state, not just the meaningful ones.
 
-## 5. My Advice for Your Next Project
+```tsx
+// Before — useEffect watching items
+const [cart, setCart] = useState<CartItem[]>([]);
 
-If you want to optimize your app and save your sanity, follow these rules:
+useEffect(() => {
+  // This fires on EVERY cart change, even intermediate ones
+  AsyncStorage.setItem(`cart-${storeId}`, JSON.stringify(cart));
+}, [cart, storeId]); // Runs more than you think
+```
 
-1. **Fetch with Query:** Never `useEffect` + `fetch`. Use TanStack Query or SWR.
-2. **Don't Sync, Derive:** If you have `firstName` and `lastName`, don't use an effect to set `fullName`. Just do `const fullName = firstName + ' ' + lastName;` in the component body.
-3. **Effects are for Synchronization, not Logic:** Only use `useEffect` when you need to talk to an **external system** (like a Browser API or a Map library) that isn't controlled by React.
-4. **Mutate and Invalidate:** Use `useMutation` for writes, and simply call `queryClient.invalidateQueries` to refresh the UI.
+**After:** Moved the storage write directly into `addToCart` and `removeFromCart`. Now I know exactly when the disk is being touched.
+
+```tsx
+// After — explicit save inside each handler
+const saveCartToStorage = useCallback(async (newCart: CartItem[]) => {
+  if (!storeId) return;
+  await AsyncStorage.setItem(`cart-${storeId}`, JSON.stringify(newCart));
+}, [storeId]);
+
+const addToCart = useCallback((newItem: Omit<CartItem, "quantity">) => {
+  setCart((prev) => {
+    const existing = prev.find(
+      (item) => item.id === newItem.id && item.variant?.id === newItem.variant?.id
+    );
+
+    const nextCart = existing
+      ? prev.map((item) =>
+          item.id === newItem.id && item.variant?.id === newItem.variant?.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        )
+      : [...prev, { ...newItem, quantity: 1 }];
+
+    saveCartToStorage(nextCart); // 👈 Explicit, synchronous, predictable
+    return nextCart;
+  });
+}, [saveCartToStorage]);
+
+const removeFromCart = useCallback((id: string, variantId?: string) => {
+  setCart((prev) => {
+    const nextCart = prev.filter(
+      (item) => !(item.id === id && item.variant?.id === variantId)
+    );
+    saveCartToStorage(nextCart); // 👈 Called only when actually needed
+    return nextCart;
+  });
+}, [saveCartToStorage]);
+```
+
+The effect felt "smart" but it was just unpredictable. The handler is boring and obvious — and that's exactly the point.
+
+---
+
+### C. Complex Forms (Product Variants)
+
+The product form generates variant combinations from options (Size × Color = 6 variants, etc.).
+
+**Before:** An effect watched the `options` array and regenerated everything on every keystroke. While the vendor was *still typing*. It was slow, janky, and kept wiping their custom stock/price inputs.
+
+```tsx
+// Before — auto-regenerate on every options change
+useEffect(() => {
+  if (hasVariants) {
+    const generated = generateVariants(options); // Runs while user is still typing
+    setVariants(generated); // Overwrites any manual edits to stock/price
+  } else {
+    setVariants([]);
+  }
+}, [options, hasVariants]); // Fires constantly during input
+```
+
+**After:** I just added a "Sync Variants" button. Same logic, same `generateVariants` function — but now it only runs when the user actually asks for it.
+
+```tsx
+// After — user-initiated via button
+const handleSyncVariants = () => {
+  if (hasVariants) {
+    const generated = generateVariants(options);
+    setVariants(generated); // User chose when to run this
+  } else {
+    setVariants([]);
+  }
+};
+
+// In JSX:
+<button type="button" onClick={handleSyncVariants}>
+  Sync Variants
+</button>
+```
+
+Honestly the fix took five minutes. The lesson is that not everything needs to be automatic — sometimes giving the user a button is just the right call.
+
+---
+
+## 4. What Actually Changed 
+
+- **Speed:** Navigation feels instant. TanStack Query serves cached data before the network even responds.
+- **Less code:** Deleted hundreds of lines of `isLoading`, `isError`, `useEffect` cleanup boilerplate. Good riddance.
+- **Stability:** Race conditions are just... gone. TanStack handles request deduplication and cancellation out of the box.
+- **Debugging is actually fun now:** TanStack DevTools shows exactly what's cached, what's stale, and why. No more guessing.
+
+## 5. Rules I Follow Now 
+
+1. **Never `useEffect` + `fetch`.** Use TanStack Query or SWR. Always.
+2. **Don't sync, derive.** Got `firstName` and `lastName`? Don't effect-set `fullName`. Just write `const fullName = firstName + ' ' + lastName` in the component body. Done.
+3. **Effects are for external systems only.** Browser APIs, map libraries, stuff React doesn't control. That's it.
+4. **Mutate and invalidate.** Use `useMutation` for writes, then call `queryClient.invalidateQueries` to refresh. Clean.
 
 ---
 
 ### Final Thoughts
 
-Killing `useEffect` isn't just about following a trend; it's about moving from **imperative "how"** to **declarative "what."** My app is faster, my tests are easier to write, and I no longer fear the dependency array.
+Getting rid of `useEffect` isn't about chasing trends — it's about writing code that actually makes sense when you read it back. Declarative beats imperative every time. My app is faster, I don't dread dependency arrays anymore, and honestly the whole codebase just feels less fragile.
 
 **Stop syncing. Start deriving.**
