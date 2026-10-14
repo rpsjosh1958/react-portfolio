@@ -106,7 +106,7 @@ const TechGrid = () => {
 
 const NPC_URL = "https://npc.aikins.xyz/u/ysljosh";
 const YEARS = 3;
-const featured = ["maleewa", "actually", "copdrop"].map((id) => projects.find((p) => p.id === id));
+const featured = ["maleewa", "actually", "copdrop", "kamen"].map((id) => projects.find((p) => p.id === id));
 const pad = (n) => String(n).padStart(2, "0");
 
 const card = "border border-white/[.09] rounded-3xl bg-card";
@@ -234,8 +234,8 @@ export default function Home({ latestPost }) {
           </div>
           <div className="grid grid-cols-2 gap-2.5 laptop:gap-3.5">
             {featured.map((p, i) => (
-              <motion.a {...reveal} key={p.id} href={p.url} target="_blank" rel="noreferrer" className={`group flex flex-col gap-2 laptop:gap-3.5 ${i === 0 ? "laptop:col-span-2" : ""}`}>
-                <div className={`relative overflow-hidden rounded-2xl laptop:rounded-3xl border border-white/[.09] bg-card2 aspect-square ${i === 0 ? "laptop:aspect-video" : "laptop:aspect-[4/3.4]"}`}>
+              <motion.a {...reveal} key={p.id} href={p.url} target="_blank" rel="noreferrer" className={`group flex flex-col gap-2 laptop:gap-3.5 ${i % 3 === 0 ? "laptop:col-span-2" : ""}`}>
+                <div className={`relative overflow-hidden rounded-2xl laptop:rounded-3xl border border-white/[.09] bg-card2 aspect-square ${i % 3 === 0 ? "laptop:aspect-video" : "laptop:aspect-[4/3.4]"}`}>
                   <img src={p.image} alt={p.title} className={`absolute inset-0 w-full h-full object-cover object-top transition-transform duration-[1200ms] ${ease} group-hover:scale-105`} />
                   <span className="absolute top-2 left-2 laptop:top-4 laptop:left-4 font-geist-mono font-medium text-[9px] laptop:text-[11px] leading-none px-2 py-1.5 laptop:px-[11px] laptop:py-2 rounded-full bg-black/60 backdrop-blur-[10px] text-white">{p.category}</span>
                 </div>

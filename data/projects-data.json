@@ -1,5 +1,18 @@
 [
   {
+    "id": "kamen",
+    "title": "Kamen Express",
+    "description": "Website for a procurement, branding and shipping company that sources products from trusted suppliers in China, brands them and delivers to customers in Ghana.",
+    "url": "https://www.kamen-co.com",
+    "github": "",
+    "image": "/images/work images/kamen.png",
+    "stack": ["Next.js", "React", "Tailwind CSS"],
+    "category": "Website",
+    "year": "2026",
+    "featured": true,
+    "mobile": false
+  },
+  {
     "id": "actually",
     "title": "ACTUALLY",
     "description": "The myth-buster swipe game. Half of what you believe is cap — swipe through one giant fact at a time and call it.",
