@@ -12,7 +12,19 @@ module.exports = {
       desktop: "1280px",
       laptopl: "1440px",
     },
-    extend: {},
+    extend: {
+      fontFamily: {
+        geist: ["Geist", "system-ui", "sans-serif"],
+        "geist-mono": ["'Geist Mono'", "monospace"],
+        display: ["'Instrument Serif'", "serif"],
+      },
+      colors: { acc: "#EB5E0B", ink: "#f3f1ed", mute: "#8d8a84", card: "#0e0e0e", card2: "#151515" },
+      keyframes: {
+        rise: { from: { opacity: "0", transform: "translateY(24px)", filter: "blur(6px)" }, to: { opacity: "1", transform: "none", filter: "none" } },
+        beat: { "0%,100%": { boxShadow: "0 0 0 0 rgba(235,94,11,.6)" }, "60%": { boxShadow: "0 0 0 7px transparent" } },
+      },
+      animation: { rise: "rise 1s both", beat: "beat 2.4s infinite" },
+    },
   },
   plugins: [],
 };

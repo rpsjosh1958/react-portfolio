@@ -1,5 +1,18 @@
 [
   {
+    "id": "actually",
+    "title": "ACTUALLY",
+    "description": "The myth-buster swipe game. Half of what you believe is cap — swipe through one giant fact at a time and call it.",
+    "url": "https://actuallygame.netlify.app/",
+    "github": "",
+    "image": "/images/work images/actually.png",
+    "stack": ["Flutter", "Dart"],
+    "category": "Game",
+    "year": "2026",
+    "featured": true,
+    "mobile": true
+  },
+  {
     "id": "sorta",
     "title": "SORTA",
     "description": "A fast-paced trivia game with categories, streaks and real-time scores backed by Firebase. Sign in, climb the leaderboard, and challenge friends.",

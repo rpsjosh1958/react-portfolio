@@ -8,6 +8,13 @@
   font-family: "Hind";
 }
 
+/* homepage: let children inherit the font set on the wrapper instead of Hind */
+@layer base {
+  .split * {
+    font-family: inherit;
+  }
+}
+
 body {
   @apply dark:bg-black dark:text-white;
 }
