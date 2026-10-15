@@ -443,7 +443,7 @@ function row(at, c0, c1, ns = false) {
 // rows that clear the slanted east kerb by a full aisle, and a single row of bays lines that kerb.
 const CARPARK = satPoly([[520, 182], [1435, 182], [1478, 212], [1615, 1182], [520, 1192]]);
 flat(shapeFrom(CARPARK), mat.asphalt, 0.05);
-CARPARK.forEach((p, i) => roadSeg(...p, ...CARPARK[(i + 1) % CARPARK.length], 0.8, mat.concrete, 0.055, 10));   // kerb
+CARPARK.forEach((p, i) => i < CARPARK.length - 1 && roadSeg(...p, ...CARPARK[i + 1], 0.8, mat.concrete, 0.055, 10));   // kerb (west edge below, round the west lot)
 [[-154, -84, [106, 124, 152]],
  [-76, -6, [106, 124, 152, 170]],
  [2, 40, [106, 124, 152, 170]],
@@ -456,6 +456,19 @@ CARPARK.forEach((p, i) => roadSeg(...p, ...CARPARK[(i + 1) % CARPARK.length], 0.
   for (let z = -140; z < 128; z += 40) lampPos.push([ex(z) - 0.9, z]);
 }
 row(70, -154, -122, true); row(88, -154, -104, true);   // short rows tucked against the stadium's north-east corner
+// lot west of the grandstand, between the De'lish road and the warm-up track, running straight into the strip behind
+// the grandstand as one paved area; entered off the De'lish road along its top
+const cx = CARPARK[0][0];
+const WEST_LOT = [[-185, -52], [cx, -52], [cx, 72], [-121, 61], [-184.2, 42.4]];
+flat(shapeFrom(WEST_LOT), mat.asphalt, 0.05);
+WEST_LOT.slice(2).forEach((p, i) => roadSeg(...p, ...WEST_LOT[(i + 3) % WEST_LOT.length], 0.8, mat.concrete, 0.055, 10));   // kerb, open to road and car park
+roadSeg(cx, CARPARK[4][1], cx, 72, 0.8, mat.concrete, 0.055, 10); roadSeg(cx, -52, cx, CARPARK[0][1], 0.8, mat.concrete, 0.055, 10);   // rest of the car park's west kerb
+// bays marked with white lines only, back to back either side of a centre line, lamps down the middle
+[[-168, 39], [-148, 45], [-128, 51]].forEach(([x, z1]) => {
+  [-2.75, 2.75].forEach(d => roadSeg(x + d, -44, x + d, z1, 5.5, lineBayMat, 0.058, 10));
+  roadSeg(x, -44, x, z1, 0.15, mat.white, 0.059, 10);
+  for (let z = -36; z < z1; z += 25) lampPos.push([x, z]);
+});
 // smaller lot across Academic Freedom Rd
 const NORTH_LOT = satPoly([[548, -10], [895, -10], [895, 80], [548, 80]]);
 flat(shapeFrom(NORTH_LOT), mat.asphalt, 0.05);
@@ -487,7 +500,7 @@ const hwX = z => HW[0][0] + (z - HW[0][1]) * (HW[1][0] - HW[0][0]) / (HW[1][1] -
 roadSeg(...HW[0], ...HW[1], 34, hwMat, 0.06, 12);
 road(JJ, 10);
 const AFR = satPoly([[-1500, 560], [0, 215], [300, 135], [470, 108], [1060, 150], [1525, 102], [3000, 40]]);   // Academic Freedom Rd
-const NUR = satPoly([[505, 112], [505, 560], [512, 1000]]);   // New University Rd, stopped short of the warm-up track
+const NUR = satPoly([[505, 112], [505, 553]]);   // New University Rd, ends where the De'lish road leaves it
 const LINKS = [satPoly([[505, 540], [250, 540], [250, 685], [40, 690]]), satPoly([[1065, 150], [1065, 192]])];
 road(AFR, 11); road(NUR, 10); LINKS.forEach(l => road(l, 8, mat.asphalt, 0.055));
 // forecourt north-west of the stadium: a two-lane access road off New University Rd, joined by a second in/out lane,
@@ -550,7 +563,7 @@ const inStad = (x, z, a, r) => Math.hypot(Math.max(Math.abs(x) - a, 0), z) < r;
 const inPoly = (x, z, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, zi] = P[i], [xj, zj] = P[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
 const segDist = (x, z, [ax, az], [bx, bz]) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz))); return Math.hypot(x - ax - t * dx, z - az - t * dz); };
 function free(x, z) {
-  if ([CARPARK, OCT, NORTH_LOT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
+  if ([CARPARK, WEST_LOT, OCT, NORTH_LOT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
   const dx = x - W.x, dz = z - W.z, c = Math.cos(W.rot), s = Math.sin(W.rot);
   if (inStad(dx * c - dz * s, dx * s + dz * c, A, 62)) return false;
   if (x > hwX(z) - 48 && x < hwX(z) + 24) return false;   // highway + service road
