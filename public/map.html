@@ -67,6 +67,7 @@
   <span></span>
   <button id="tLabels" class="on">Labels</button>
   <button id="tRotate">Rotate</button>
+  <button id="tCut">Cutaway</button>
   <span></span>
   <button id="tDraw">Draw</button>
 </div>
@@ -118,7 +119,7 @@ controls.autoRotateSpeed = 0.6;
 
 scene.add(new THREE.HemisphereLight(0xf6f3ec, 0x7a7158, 1.25));
 const sun = new THREE.DirectionalLight(0xfff4e2, 2.3);
-sun.position.set(-240, 380, 200);
+sun.position.set(230, 380, 170);   // from the east, so the grandstand front is in light as in the photos
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
 Object.assign(sun.shadow.camera, { left: -460, right: 460, top: 460, bottom: -460, near: 10, far: 1400 });
@@ -171,13 +172,13 @@ function canvasTex(w, h, draw, repeat = true) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 }
-function band(u0, u1, prof, a, { tile = 0 } = {}) {
-  const n = prof.length, cnt = Math.max(2, Math.ceil((u1 - u0) * 40)), pos = [], uv = [], idx = [];
+function band(u0, u1, prof, a, { tile = 0, yFn = null, res = 40 } = {}) {
+  const n = prof.length, cnt = Math.max(2, Math.ceil((u1 - u0) * res)), pos = [], uv = [], idx = [];
   let dist = 0, prev = null; const rO = prof[n - 1][0];
   for (let i = 0; i <= cnt; i++) {
     const u = u0 + (u1 - u0) * i / cnt, po = pp(u, rO, a);
     if (prev) dist += Math.hypot(po[0] - prev[0], po[1] - prev[1]); prev = po;
-    prof.forEach(([r, h], j) => { const [x, z] = pp(u, r, a); pos.push(x, h, z); uv.push(tile ? dist / tile : 0, j / (n - 1)); });
+    prof.forEach(([r, h], j) => { const [x, z] = pp(u, r, a); pos.push(x, h + (yFn ? yFn(u) : 0), z); uv.push(tile ? dist / tile : 0, j / (n - 1)); });
   }
   for (let i = 0; i < cnt; i++) for (let j = 0; j < n - 1; j++) { const A = i * n + j, B = A + 1, C = A + n, D = C + 1; idx.push(A, C, B, B, C, D); }
   let g = new THREE.BufferGeometry();
@@ -248,8 +249,6 @@ const roadMat = M('road', 0xffffff, { map: canvasTex(128, 128, (x) => {
 }) });
 
 // ---------- ground
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), mat.ground);
-ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 // Site layout traced from a north-up satellite image: K metres per image pixel, (CX, CY) = main stadium centre in that image.
 // ponytail: hand-traced; nudge K / CX / CY or individual points if something sits off.
 const K = 0.3, CX = 882, CY = 727;
@@ -279,36 +278,136 @@ function buildTrack(parent, apron) {
   });
 }
 
+// ---------- laying geometry onto the site levels: triangles in world space, cut where the level changes slope
+function trisOf(g, Mx) {
+  const ng = g.index ? g.toNonIndexed() : g, P = ng.attributes.position, U = ng.attributes.uv, tris = [];
+  for (let i = 0; i < P.count; i += 3) tris.push([0, 1, 2].map(k => {
+    const v = new THREE.Vector3().fromBufferAttribute(P, i + k); if (Mx) v.applyMatrix4(Mx);
+    return { v, uv: U ? [U.getX(i + k), U.getY(i + k)] : [0, 0] };
+  }));
+  return tris;
+}
+const lerpP = (p, q, t) => ({ v: p.v.clone().lerp(q.v, t), uv: [p.uv[0] + (q.uv[0] - p.uv[0]) * t, p.uv[1] + (q.uv[1] - p.uv[1]) * t] });
+function splitTris(tris, X) {   // cut every triangle that straddles the line x = X
+  const out = [];
+  tris.forEach(t => {
+    const d = t.map(p => p.v.x - X);
+    if (!d.some(e => e > 1e-6) || !d.some(e => e < -1e-6)) { out.push(t); return; }
+    for (let r = 0; r < 3; r++) {
+      const a = t[r], b = t[(r + 1) % 3], c = t[(r + 2) % 3], da = d[r], db = d[(r + 1) % 3], dc = d[(r + 2) % 3];
+      if (da * db < 0 && da * dc < 0) { const ab = lerpP(a, b, da / (da - db)), ac = lerpP(a, c, da / (da - dc)); out.push([a, ab, ac], [ab, b, c], [ab, c, ac]); return; }
+      if (Math.abs(da) <= 1e-6 && db * dc < 0) { const bc = lerpP(b, c, db / (db - dc)); out.push([a, b, bc], [a, bc, c]); return; }
+    }
+    out.push(t);
+  });
+  return out;
+}
+function subdivTris(tris, maxLen) {   // longest-edge bisection until no edge is longer than maxLen
+  const out = [], stack = [...tris];
+  while (stack.length) {
+    const t = stack.pop(), e = [0, 1, 2].map(i => t[i].v.distanceTo(t[(i + 1) % 3].v)), i = e.indexOf(Math.max(...e));
+    if (e[i] <= maxLen) { out.push(t); continue; }
+    const m = lerpP(t[i], t[(i + 1) % 3], 0.5);
+    stack.push([t[i], m, t[(i + 2) % 3]], [m, t[(i + 1) % 3], t[(i + 2) % 3]]);
+  }
+  return out;
+}
+function fromTris(tris, yOf, inv) {   // yOf(tri) → (x, z) => height added to each vertex
+  const pos = [], uv = [];
+  tris.forEach(t => { const f = yOf(t); t.forEach(p => { const q = p.v.clone(); q.y += f(q.x, q.z); if (inv) q.applyMatrix4(inv); pos.push(q.x, q.y, q.z); uv.push(...p.uv); }); });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.computeVertexNormals();
+  return g;
+}
+
 // ---------- main stadium
-const S = new THREE.Group(); S.rotation.y = -Math.PI / 2; scene.add(S);   // long axis north–south, grandstand on the west
-flat(stadShape(A, 57), mat.grass, 0.09, S);
+// The site falls from west to east (site photos). Behind the grandstand, and everything west of it, is the high level; the
+// pitch is D below it. The grandstand's service corridor is at pitch level and opens at each end onto the road round the
+// stands, which falls a further LOWR along the east, where the main car park is.
+const D = 3.8, cutaway = [];   // cutaway: parts hidden by the Cutaway button
+const S = new THREE.Group(); S.rotation.y = -Math.PI / 2; S.position.y = -D; scene.add(S);   // long axis north–south, grandstand on the west
+const R0 = 56, RF = 75;
+const ZR = 81;   // back of the grandstand's service corridor
+const toW = ([x, z]) => [-z, x];   // stadium-local → world (group turned -90°)
+// ring levels: the road round the stands stays level with the pitch from each grandstand end to the middle tunnel of the
+// curved stand, then falls LOWR below it over the next few bays and stays down along the east (site photos)
+const LOWR = -2.9;
+function ringY(u) {
+  u = ((u % 4) + 4) % 4;
+  if (u < 1) return LOWR;
+  if (u >= 2 && u < 3) return 0;
+  const f = u < 2 ? 2 - u : u - 3, t = Math.min(1, Math.max(0, (f - 0.52) / 0.14));
+  return LOWR * t * t * (3 - 2 * t);
+}
+function uOf(x, z) {   // stadium-local point → nearest position u round the stadium
+  if (Math.abs(x) <= A) return z < 0 ? (x + A) / (2 * A) : 2 + (A - x) / (2 * A);
+  if (x > A) return 1 + (Math.atan2(z, x - A) + Math.PI / 2) / Math.PI;
+  let t = Math.atan2(z, x + A); if (t < 0) t += 2 * Math.PI;
+  return 3 + (t - Math.PI / 2) / Math.PI;
+}
+const BOWL = (() => {   // opening in the paving round the stands: the bowl, plus the grandstand's corridor strip
+  const XC = 31.6, ring = stadPts(A, RF, 320), cut = ([x, z]) => z > 0 && Math.abs(x) < XC;
+  const i0 = ring.findIndex(cut), i1 = ring.length - [...ring].reverse().findIndex(cut);
+  return [...ring.slice(0, i0), [XC, RF], [XC, ZR], [-XC, ZR], [-XC, RF], ...ring.slice(i1)].map(toW);
+})();
+const withBowl = shape => { shape.holes.push(new THREE.Path(BOWL.map(([x, z]) => new THREE.Vector2(x, -z)))); return shape; };
+const floorHoles = [];   // [x0, z0, x1, z1] rectangles cut from the bowl floor (built after the stands)
+flat(stadShape(A, R0 - 0.7), mat.grass, 0.09, S);   // paving under the stands' decks
 // octagonal perimeter wall; it closes onto the back corners of the grandstand, which sits in the wall line rather than inside it.
 // The ring between the wall and the stands is grey paving, with a tarmac service road running through it.
 // octagon kept a fixed distance outside the service road: sides at x ±WD, ends WD beyond the curve centres, 45° corners
 const RR = 81, WD = RR + 6.5;   // service road centreline radius; wall offset = half the road + 3 m verge
 const c45 = WD * Math.tan(Math.PI / 8);
 const [o0, o1, o2, o3, o4, o5, o6, o7] = [[-c45, -A - WD], [c45, -A - WD], [WD, -A - c45], [WD, A + c45], [c45, A + WD], [-c45, A + WD], [-WD, A + c45], [-WD, -A - c45]];
-const GS = [[o6[0], 32], [-81, 32], [-81, -32], [o7[0], -32]];   // notch round the grandstand's back
+const GS = [[o6[0], 32], [-ZR - 0.4, 32], [-ZR - 0.4, -32], [o7[0], -32]];   // notch round the grandstand's back
 const OCT = [o0, o1, o2, o3, o4, o5, o6, ...GS, o7];
-flat(shapeFrom(OCT), M('paving', 0x9a9da1), 0.085);
+const XB = -100.8;   // line of the gate islands and palm strip behind the grandstand (as-built layout)
+// site levels outside the stadium: inside the octagon they follow the road round the stands; outside it the ground falls
+// from the high level at x -88 to the low level at x 0
+const inPolyW = (x, z, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, zi] = P[i], [xj, zj] = P[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
+const LX0 = -88, LX1 = 0, LOWW = -D + LOWR;
+const Hout = x => x <= LX0 ? 0 : x >= LX1 ? LOWW : LOWW * (x - LX0) / (LX1 - LX0);
+const Hin = (x, z) => -D + ringY(uOf(z, -x));
+const LVL = (x, z) => inPolyW(x, z, OCT) ? Hin(x, z) : Hout(x);
+const withOct = shape => { shape.holes.push(new THREE.Path(OCT.map(([x, z]) => new THREE.Vector2(x, -z)))); return shape; };
+flat(withOct(shapeFrom(rectPts(-2000, -2000, 2000, 2000))), mat.ground, 0);
+{   // paving inside the octagon, following the levels of the road round the stands
+  const g = new THREE.ShapeGeometry(withBowl(shapeFrom(OCT))); g.rotateX(-Math.PI / 2);
+  const m = new THREE.Mesh(fromTris(subdivTris(trisOf(g), 3), () => (x, z) => 0.085 + Hin(x, z)), M('paving', 0x9a9da1));
+  m.receiveShadow = true; m.userData.lvl = true; scene.add(m);
+}
 // wall: low white base with a metal fence on top
 const fenceMat = M('fence', 0xffffff, { map: canvasTex(64, 64, (x) => {
   x.fillStyle = '#4a4f55'; x.fillRect(0, 0, 64, 5); x.fillRect(0, 59, 64, 5);
   for (let i = 0; i < 64; i += 8) x.fillRect(i, 0, 3, 64);
 }), alphaTest: 0.5, side: DS, roughness: 0.6, metalness: 0.4 });
-function wallSeg(a, b) {
-  const len = Math.hypot(b[0] - a[0], b[1] - a[1]), ry = Math.atan2(-(b[1] - a[1]), b[0] - a[0]), mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
-  box(len + 0.4, 1.1, 0.4, mat.white, mx, 0.55, mz).rotation.y = ry;
-  const g = new THREE.PlaneGeometry(len, 1.3), uv = g.attributes.uv;
-  for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * len / 1.6);
-  const f = new THREE.Mesh(g, fenceMat); f.position.set(mx, 1.75, mz); f.rotation.y = ry; scene.add(f);
+const palisadeMat = M('palisade', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(64, 128, (x) => {   // 0.8 m: four pointed pales on two rails
+  x.fillStyle = '#8f959a'; x.fillRect(0, 26, 64, 6); x.fillRect(0, 104, 64, 6);
+  for (let i = 4; i < 64; i += 16) { x.fillRect(i, 12, 8, 116); x.beginPath(); x.moveTo(i, 12); x.lineTo(i + 4, 0); x.lineTo(i + 8, 12); x.fill(); }
+}) });
+const boundaryConc = M('boundaryConc', 0xbab7af);
+function wallSeg(a, b) {   // in ~4 m pieces: a concrete kerb, retaining the ground on its high side, under a 2.2 m palisade fence
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]), ry = Math.atan2(-(b[1] - a[1]), b[0] - a[0]), n = Math.max(1, Math.round(len / 4)), l = len / n;
+  const nx = -(b[1] - a[1]) / len, nz = (b[0] - a[0]) / len;
+  for (let i = 0; i < n; i++) {
+    const mx = a[0] + (b[0] - a[0]) * (i + 0.5) / n, mz = a[1] + (b[1] - a[1]) * (i + 0.5) / n;
+    const la = LVL(mx + nx * 0.8, mz + nz * 0.8), lb = LVL(mx - nx * 0.8, mz - nz * 0.8), y0 = Math.min(la, lb), y1 = Math.max(la, lb) + 0.3;
+    const w = box(l + 0.4, y1 - y0, 0.4, boundaryConc, mx, (y0 + y1) / 2, mz); w.rotation.y = ry; w.userData.lvl = true;
+    const g = new THREE.PlaneGeometry(l, 2.2), uv = g.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setX(k, uv.getX(k) * l / 0.8);
+    const f = new THREE.Mesh(g, palisadeMat); f.position.set(mx, y1 + 1.1, mz); f.rotation.y = ry; f.userData.lvl = true; scene.add(f);
+  }
 }
 const along = (a, b, d) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]); return [a[0] + (b[0] - a[0]) * d / L, a[1] + (b[1] - a[1]) * d / L]; };
 // vehicles get in only at the north-east and south-east corners; five ticket gates along the east wall face the car park
 const ROAD_GATES = [along(o1, o0, 5), along(o1, o2, 5), along(o4, o3, 5), along(o4, o5, 5)];
 const TICKET_GATES = [-68, -34, 0, 34, 68];
-const east = TICKET_GATES.flatMap(z => [[o2[0], z - 2], [o2[0], z + 2]]);
-[[GS[2], GS[3], o7, o0, ROAD_GATES[0]],
+const boothRoof = M('boothRoof', 0x8d939a), turnstileMat = M('turnstile', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(32, 32, x => {
+  x.fillStyle = '#9aa1a7'; x.fillRect(0, 0, 32, 3); x.fillRect(0, 29, 32, 3); x.fillRect(0, 0, 3, 32); x.fillRect(29, 0, 3, 32);
+  for (let y = 6; y < 28; y += 5) x.fillRect(0, y, 32, 2);
+}, false) });
+const east = TICKET_GATES.flatMap(z => [[o2[0], z - 4.2], [o2[0], z + 4.2]]);
+const YG = [along(o7, o0, 3.4), along(o7, o0, 6.0)];   // gate at the top of the north-west yard's stair
+[[GS[2], GS[3], o7, YG[0]], [YG[1], o0, ROAD_GATES[0]],
  [ROAD_GATES[1], o2, ...east, o3, ROAD_GATES[2]],
  [ROAD_GATES[3], o5, o6, GS[0], GS[1]]]
   .forEach(run => run.slice(1).forEach((b, i) => {
@@ -317,15 +416,68 @@ const east = TICKET_GATES.flatMap(z => [[o2[0], z - 2], [o2[0], z + 2]]);
     wallSeg(a, b);
   }));
 ROAD_GATES.forEach(([x, z]) => box(0.9, 3, 0.9, mat.white, x, 1.5, z));   // gate pillars
+// roofed booth with two full-height turnstiles, a barred pedestrian gate either side with a green bar, and a concrete
+// approach between low walls on the car park side (site photos)
+const sideGateMat = M('sideGate', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(64, 64, (x) => {
+  x.fillStyle = '#8f959a'; x.fillRect(0, 0, 64, 4); x.fillRect(0, 60, 64, 4); x.fillRect(0, 0, 4, 64); x.fillRect(60, 0, 4, 64);
+  for (let i = 10; i < 60; i += 10) x.fillRect(i, 0, 3, 64);
+  x.fillStyle = '#2f8a4a'; x.fillRect(0, 34, 64, 6);
+}, false) });
 TICKET_GATES.forEach(z => {
   const x = o2[0];
-  [-2.2, 2.2].forEach(d => box(0.4, 3.2, 0.4, mat.white, x, 1.6, z + d));   // frame
-  box(0.5, 0.5, 4.8, mat.white, x, 3.2, z);
-  box(2.4, 2.6, 2.4, mat.white, x + 2.6, 1.3, z - 4.2);                      // ticket kiosk on the car park side
-  box(3.2, 0.2, 3.2, mat.roof, x + 2.6, 2.7, z - 4.2);
+  box(3.4, 0.14, 4.6, boothRoof, x + 1.2, 2.95, z);
+  [-2.15, 2.15].forEach(dz => box(3.2, 2.9, 0.3, boothRoof, x + 1.2, 1.45, z + dz));   // solid sides
+  [-1.0, 1.0].forEach(dz => box(1.2, 2.25, 1.2, turnstileMat, x + 1.2, 1.13, z + dz));
+  [-3.2, 3.2].forEach(dz => {
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 2.1), sideGateMat); g.position.set(x + 0.05, 1.2, z + dz); g.rotation.y = Math.PI / 2; scene.add(g);
+    box(0.12, 2.3, 0.12, mat.steel, x + 0.05, 1.15, z + dz + Math.sign(dz) * 0.98);
+  });
+  flat(shapeFrom(rectPts(x + 0.2, z - 4.2, x + 7, z + 4.2)), mat.concrete, 0.07);   // approach
+  [-4.3, 4.3].forEach(dz => box(6.6, 0.5, 0.25, mat.concrete, x + 3.7, 0.25, z + dz));
 });
-// 7 m service road round the outside of the stands, ending at the grandstand's corners, with spurs to the two vehicle gates
-mesh(band(2.91, 6.09, [[RR - 3.5, 0.095], [RR + 3.5, 0.095]], A, { tile: 12 }), roadMat, S);
+// ---- behind the grandstand, per the as-built layout
+const palmPts = [];
+const palmRow = (x, z0, z1, step) => { for (let z = z0; Math.sign(z1 - z0) * (z1 - z) >= -0.01; z += Math.sign(z1 - z0) * step) palmPts.push([x, z, 5 + (palmPts.length % 3) * 0.7]); };
+function rrShape(x0, z0, x1, z1, r) {   // rounded rectangle in plan
+  const X0 = Math.min(x0, x1), X1 = Math.max(x0, x1), Y0 = Math.min(-z0, -z1), Y1 = Math.max(-z0, -z1), s = new THREE.Shape();
+  r = Math.min(r, (X1 - X0) / 2, (Y1 - Y0) / 2);
+  s.moveTo(X0 + r, Y0); s.lineTo(X1 - r, Y0); s.absarc(X1 - r, Y0 + r, r, -Math.PI / 2, 0); s.lineTo(X1, Y1 - r); s.absarc(X1 - r, Y1 - r, r, 0, Math.PI / 2);
+  s.lineTo(X0 + r, Y1); s.absarc(X0 + r, Y1 - r, r, Math.PI / 2, Math.PI); s.lineTo(X0, Y0 + r); s.absarc(X0 + r, Y0 + r, r, Math.PI, Math.PI * 1.5);
+  return s;
+}
+function planter(x0, z0, x1, z1, r = 0.3) {   // kerbed grass bed
+  const X0 = Math.min(x0, x1), X1 = Math.max(x0, x1), Z0 = Math.min(z0, z1), Z1 = Math.max(z0, z1);
+  [[0, 0.4, mat.concrete], [0.25, 0.42, mat.grass]].forEach(([i, h, m]) => {
+    const g = new THREE.ExtrudeGeometry(rrShape(X0 + i, Z0 + i, X1 - i, Z1 - i, Math.max(0.05, r - i)), { depth: h, bevelEnabled: false }).rotateX(-Math.PI / 2);
+    const o = new THREE.Mesh(g, m); o.receiveShadow = true; scene.add(o);
+  });
+}
+// car park between the gate islands and the stadium wall: two rows of bays along the island line, 14 to the south and 18 to the north
+flat(shapeFrom([[XB, -88], [o7[0], -88], [o7[0], 88], [XB, 88]]), mat.asphalt, 0.087);
+[[29.2, 71.2], [-26, -80]].forEach(([z0, z1]) => roadSeg(XB + 2.6, z0, XB + 2.6, z1, 5.2, lineBayMat, 0.09, 12));
+// flag islands on the island line and a palm strip running north
+const flagMat = new THREE.MeshStandardMaterial({ side: DS, roughness: 0.8, map: canvasTex(96, 64, (x) => {   // Ghana flag
+  [['#ce1126', 0], ['#fcd116', 21], ['#006b3f', 42]].forEach(([c, y]) => { x.fillStyle = c; x.fillRect(0, y, 96, 22); });
+  x.fillStyle = '#000'; x.beginPath();
+  for (let i = 0; i < 10; i++) { const r = i % 2 ? 4 : 10, a = -Math.PI / 2 + i * Math.PI / 5; x.lineTo(48 + r * Math.cos(a), 32 + r * Math.sin(a)); }
+  x.fill();
+}, false) });
+[[7.2, 17.6], [-7.2, -17.8]].forEach(([z0, z1]) => {
+  planter(-105.8, z0, -101.6, z1, 2.1);
+  [0.2, 0.5, 0.8].forEach(t => {
+    const z = z0 + (z1 - z0) * t;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 8, 8), mat.white); pole.position.set(-103.7, 4.4, z); pole.castShadow = true; scene.add(pole);
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.2), flagMat); f.position.set(-103.7, 7.6, z + 0.92); f.rotation.y = Math.PI / 2; f.castShadow = true; scene.add(f);
+  });
+});
+planter(-103.6, -24.6, -101, -85.5); palmRow(-102.3, -26.5, -84, 4.2);
+const bollardMat = M('bollard', 0xb4483b);
+for (let z = -27; z > -85; z -= 4.5) box(0.6, 0.45, 0.45, bollardMat, -100.4, 0.23, z);   // red-painted concrete blocks along the verge
+
+// 7 m road round the outside of the stands, level with the pitch at the grandstand ends and falling LOWR along the east; it
+// ends at the junctions beside the grandstand ends, with spurs to the two vehicle gates
+const tEnd = Math.acos((62 - A) / RR), ringU = [4 - (tEnd + Math.PI / 2) / Math.PI, 5 + (tEnd + Math.PI / 2) / Math.PI];
+mesh(band(...ringU, [[RR - 3.5, 0.14], [RR + 3.5, 0.14]], A, { tile: 12, yFn: ringY, res: 300 }), roadMat, S);
 [ROAD_GATES.slice(0, 2), ROAD_GATES.slice(2)].forEach(([g0, g1]) => {
   const gx = (g0[0] + g1[0]) / 2, gz = (g0[1] + g1[1]) / 2;
   let best = [0, 0, Infinity];
@@ -334,79 +486,795 @@ mesh(band(2.91, 6.09, [[RR - 3.5, 0.095], [RR + 3.5, 0.095]], A, { tile: 12 }), 
 });
 buildTrack(S, 50);
 
-const R0 = 56, R1 = 73, RF = 75;
-function stand(u0, u1, rows, h1, backMat) {
-  const prof = [[R0, 0], [R0, 1.3]]; const dr = (R1 - R0) / rows, dh = (h1 - 1.3) / rows;
-  for (let k = 0; k < rows; k++) { const r = R0 + (k + 1) * dr, h = 1.3 + k * dh; prof.push([r, h], [r, h + dh]); }
-  mesh(shadeSteps(band(u0, u1, prof, A), 0x4c8c64, 0x2f5c45), mat.seat, S);
-  mesh(band(u0, u1, [[R1, h1], [RF, h1]], A), mat.concrete, S);
-  mesh(band(u0, u1, [[RF, 0], [RF, h1 + 1.2]], A, { tile: backMat === facadeMat ? 40 : 0 }), backMat, S);
-  const capProf = [...prof, [RF, h1], [RF, 0]];
-  cap(u0, capProf, A, mat.white, S); cap(u1, capProf, A, mat.white, S);
+// stands round the bowl (site photos, seating plan): 11 rows of seats on a raised deck. Under the deck, pitch-level rooms
+// are set back behind a row of grey columns; grey fascia with a glass balustrade on posts; a walkway along the top.
+// Each tunnel is a well in the front 4 rows between two aisles, a flight rising from inside the stand to the front walkway,
+// and a platform projecting over the pitch on four columns, glazed on three sides.
+const YF = 3.2, SOFF = YF - 0.9, RW = R0 + 2.2, SR0 = R0 + 1.6, SDR = 1.2, SRISE = 0.8, SROWS = 11;   // deck, soffit, room face, first row, row depth/rise
+const srowR = k => SR0 + k * SDR, SR1 = srowR(SROWS), H1 = YF + SROWS * SRISE;
+const OW = 5, AW = 1.2, PW = 6, PD = 2.4, SEAT = 0.5;   // well width, aisle width, platform width/depth, seat pitch
+const segLen = (u, r) => (Math.floor(((u % 4) + 4) % 4) % 2 ? Math.PI * r : 2 * A);   // metres per unit of u at radius r
+const onRow = (u, r, t = 0) => pp(u + t / segLen(u, r), r, A);   // point on radius r, offset t metres along it
+const facing = (u, r) => { const [x, z] = pp(u, r, A), [x2, z2] = pp(u + 0.001, r, A); return Math.atan2(-(z2 - z), x2 - x); };
+const placeAt = (u, r, t, y, w, h, d, m) => { const [x, z] = onRow(u, r, t), o = box(w, h, d, m, x, y, z, S); o.rotation.y = facing(u, r); return o; };
+const placePlane = (u, r, t, y, w, h, m, out = true) => { const [x, z] = onRow(u, r, t), p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); p.position.set(x, y, z); p.rotation.y = facing(u, r) + (out ? Math.PI : 0); S.add(p); return p; };
+function vband(u0, u1, r, yb, yt, m, tile = 0, tileH = 0) {   // vertical strip at radius r; bottom and top may vary with u
+  const cnt = Math.max(2, Math.ceil((u1 - u0) * 80)), pos = [], uv = [], idx = [], Y = (f, u) => typeof f === 'function' ? f(u) : f;
+  let dist = 0, prev = null;
+  for (let i = 0; i <= cnt; i++) {
+    const u = u0 + (u1 - u0) * i / cnt, [x, z] = pp(u, r, A), b = Y(yb, u), t = Y(yt, u);
+    if (prev) dist += Math.hypot(x - prev[0], z - prev[1]); prev = [x, z];
+    const uu = tile ? dist / tile : i / cnt;
+    pos.push(x, b, z, x, t, z); uv.push(uu, tileH ? b / tileH : 0, uu, tileH ? t / tileH : 1);
+  }
+  for (let i = 0; i < cnt; i++) { const a = 2 * i; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); g.computeVertexNormals(); return mesh(g, m, S);
 }
-stand(0.075, 0.925, 13, 12.5, facadeMat);    // east straight — free-standing, gaps either end
-stand(0.995, 2.005, 13, 12.5, facadeMat);    // south curve, stops short of the grandstand
-stand(2.995, 4.005, 13, 12.5, facadeMat);    // north curve, stops short of the grandstand
+const bar3 = (a, b, t, m) => {
+  const P = new THREE.Vector3(...a), Q = new THREE.Vector3(...b), o = box(t, t, P.distanceTo(Q), m, 0, 0, 0, S);
+  o.position.copy(P).add(Q).multiplyScalar(0.5); o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), Q.clone().sub(P).normalize()); o.castShadow = false;
+};
+const standPost = M("standPost", 0x6d737a, { metalness: 0.4, roughness: 0.5 }), fasciaMat = M("fascia", 0x7c8288, { side: DS }), colGrey = M('standCol', 0x8d9398), voidMat = M('void', 0x2a2e33);
+const standGlass = new THREE.MeshStandardMaterial({ color: 0xcfe3e8, transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0.1, depthWrite: false, side: DS });
+const roomMat = M('rooms', 0xffffff, { map: canvasTex(512, 96, (x) => {   // 12 m of room front: white over a grey dado band
+  x.fillStyle = '#efeee9'; x.fillRect(0, 0, 512, 96); x.fillStyle = '#8d9599'; x.fillRect(0, 52, 512, 44);
+  const door = x0 => { x.fillStyle = '#f7f7f5'; x.fillRect(x0, 6, 30, 90); x.strokeStyle = '#c4c7c8'; x.lineWidth = 2; x.strokeRect(x0 + 3, 10, 24, 38); x.strokeRect(x0 + 3, 54, 24, 38); };
+  door(40); door(300); door(331);
+  x.fillStyle = '#f2f1ed'; x.fillRect(150, 8, 34, 86); x.fillStyle = '#b4b7b4'; for (let y = 12; y < 92; y += 7) x.fillRect(152, y, 30, 3);   // louvred vent
+  x.fillStyle = '#56636c'; x.fillRect(430, 16, 32, 20); x.fillStyle = '#d6d9da'; x.fillRect(214, 24, 16, 10);   // window, sign
+}) });
+const seatPts = [], colPts = [], postPts = [], outColPts = [], railPts = [], flagPts = [];
+// outside of the stands (site photos): striped cladding on an overhang above a colonnade at pitch level
+const SOFB = 3.6, RCB = RF - 3.2;   // colonnade soffit height; rooms' back wall
+const claddingMat = M('cladding', 0xffffff, { side: DS, map: canvasTex(1024, 64, x => {
+  let sd = 11; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  const cols = ['#c2483a', '#d8d5cf', '#9b958e', '#efede8', '#c2483a', '#7f7a75', '#d8d5cf', '#b5473a'];
+  for (let px = 0; px < 1024;) { const w = 18 + Math.floor(rnd() * 40); x.fillStyle = cols[Math.floor(rnd() * cols.length)]; x.fillRect(px, 0, w, 64); px += w; }
+  x.fillStyle = 'rgba(0,0,0,0.13)'; for (let i = 0; i < 1024; i += 6) x.fillRect(i, 0, 2, 64);   // corrugations
+}) });
+const soffitMat = M('soffit', 0xf2f1ed, { side: DS }), parapetMat = M('parapet', 0x8c9296, { side: DS }), maroonMat = M('maroonRail', 0x7a2a2e, { side: DS });
+const binGreen = M('binGreen', 0x2f8a4a);
+const paverMat = M('pavers', 0xffffff, { map: canvasTex(64, 64, x => {
+  x.fillStyle = '#9c968c'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#8a847a';
+  for (let y = 0; y < 64; y += 8) for (let i = (y / 8) % 2 ? -8 : 0; i < 64; i += 16) x.fillRect(i + 1, y + 1, 14, 6);
+}) });
+const roomsOutMat = M('roomsOut', 0xffffff, { side: DS, map: canvasTex(480, 144, x => {   // 12 m of the back wall under the colonnade
+  x.fillStyle = '#efeee9'; x.fillRect(0, 0, 480, 144); x.fillStyle = '#8a9296'; x.fillRect(0, 96, 480, 48);   // grey below 1.2 m
+  const door = (x0, w) => { x.fillStyle = '#f4f5f4'; x.fillRect(x0, 60, w, 84); x.strokeStyle = '#c3c6c7'; x.lineWidth = 2; x.strokeRect(x0 + 3, 63, w - 6, 34); x.fillStyle = '#cfd2d3'; for (let y = 102; y < 140; y += 5) x.fillRect(x0 + 3, y, w - 6, 2); };
+  const vent = x0 => { x.fillStyle = '#3c4247'; x.fillRect(x0, 14, 30, 22); x.fillStyle = '#e8e6e0'; for (let i = x0 + 3; i < x0 + 30; i += 6) x.fillRect(i, 14, 2, 22); };
+  door(36, 38); vent(110); vent(330); door(392, 30); door(422, 30);
+  x.fillStyle = '#ffffff'; x.fillRect(190, 56, 44, 52); x.fillStyle = '#5d6a72'; x.fillRect(194, 60, 36, 44);
+  x.fillStyle = '#d4d6d4'; for (let y = 62; y < 104; y += 4) x.fillRect(194, y, 36, 2);   // window with blinds
+  x.fillStyle = '#fbfbf6'; x.fillRect(250, 40, 56, 6);   // strip light
+  x.fillStyle = '#c0392b'; x.beginPath(); x.arc(160, 30, 5, 0, 7); x.fill();   // alarm bell
+}) });
+const washMat = M('washrooms', 0xffffff, { side: DS, map: canvasTex(576, 208, x => {   // gents, accessible, ladies, barred windows either side
+  x.fillStyle = '#efeee9'; x.fillRect(0, 0, 576, 208); x.fillStyle = '#8a9296'; x.fillRect(0, 112, 576, 96);
+  const win = x0 => { x.fillStyle = '#fff'; x.fillRect(x0, 60, 76, 92); x.fillStyle = '#4f5b63'; x.fillRect(x0 + 5, 65, 66, 82); x.fillStyle = '#e9e9e4'; for (let i = x0 + 9; i < x0 + 70; i += 8) x.fillRect(i, 65, 3, 82); };
+  const head = (cx, cy) => { x.beginPath(); x.arc(cx, cy, 3, 0, 7); x.fill(); };
+  const door = (x0, icon) => {
+    x.fillStyle = '#f4f5f4'; x.fillRect(x0, 46, 76, 162); x.strokeStyle = '#c3c6c7'; x.lineWidth = 3; x.strokeRect(x0 + 5, 51, 66, 70);
+    x.fillStyle = '#cfd2d3'; for (let y = 130; y < 204; y += 7) x.fillRect(x0 + 5, y, 66, 3);
+    x.fillStyle = '#fff'; x.fillRect(x0 + 26, 58, 24, 30); x.fillStyle = '#222'; x.strokeStyle = '#222'; icon(x0 + 38, 64);
+  };
+  win(28); win(472);
+  door(150, (cx, cy) => { head(cx, cy); x.fillRect(cx - 3, cy + 4, 6, 14); });
+  door(250, (cx, cy) => { head(cx - 2, cy); x.fillRect(cx - 4, cy + 4, 5, 8); x.lineWidth = 2; x.beginPath(); x.arc(cx + 2, cy + 15, 5, 0, 7); x.stroke(); });
+  door(350, (cx, cy) => { head(cx, cy); x.beginPath(); x.moveTo(cx, cy + 4); x.lineTo(cx - 6, cy + 17); x.lineTo(cx + 6, cy + 17); x.fill(); });
+  x.fillStyle = '#fbfbf6'; x.fillRect(236, 22, 104, 8);   // strip light
+  x.fillStyle = '#d9dcda'; x.fillRect(268, 4, 40, 14); x.fillStyle = '#2d7d46'; x.fillRect(272, 7, 32, 8);   // toilet sign
+}) });
+const tileMat = M('tiledWall', 0xffffff, { side: DS, map: canvasTex(96, 96, x => {   // striped grey tiles, 2.4 m square
+  ['#cfccc5', '#a9a6a0', '#d9d6cf', '#8f8c86'].forEach((c, i) => { x.fillStyle = c; x.fillRect(i * 24, 0, 24, 96); });
+  x.fillStyle = 'rgba(0,0,0,0.18)'; for (let i = 0; i < 96; i += 24) { x.fillRect(i, 0, 1, 96); x.fillRect(0, i, 96, 1); }
+}) });
+const boardMat = (sector, a, b) => M('seatBoard', 0xffffff, { side: DS, map: canvasTex(160, 128, x => {
+  x.fillStyle = '#f4f4f2'; x.fillRect(0, 0, 160, 128); x.strokeStyle = '#2a2a2a'; x.lineWidth = 5; x.strokeRect(6, 6, 148, 116);
+  x.fillStyle = '#1d1d1d'; x.textAlign = 'center'; x.font = 'bold 26px Arial, sans-serif'; x.fillText(`SECTOR ${sector}`, 80, 40);
+  x.font = 'bold 22px Arial, sans-serif'; x.fillText('SEAT NO.', 80, 72); x.fillText(`${a} - ${b}`, 80, 104);
+}, false) });
+// athlete silhouettes on the cladding
+const silGeo = new THREE.PlaneGeometry(4.6, 4.6);
+const silMat = draw => M('silhouette', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(256, 256, x => { x.strokeStyle = x.fillStyle = '#25282c'; x.lineCap = x.lineJoin = 'round'; draw(x); }, false) });
+const ln = (x, w, pts) => { x.lineWidth = w; x.beginPath(); pts.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); x.stroke(); };
+const hd = (x, cx, cy, r = 15) => { x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); };
+const SILS = [
+  silMat(x => { hd(x, 150, 42); ln(x, 28, [[142, 64], [116, 132]]); ln(x, 18, [[116, 132], [154, 172], [196, 214]]); ln(x, 18, [[116, 132], [96, 178], [58, 182]]); ln(x, 13, [[136, 74], [172, 100], [192, 74]]); ln(x, 13, [[136, 74], [104, 104], [84, 88]]); }),   // runner
+  silMat(x => { ln(x, 5, [[16, 182], [240, 182]]); x.lineWidth = 26; x.beginPath(); x.moveTo(72, 156); x.quadraticCurveTo(128, 84, 188, 128); x.stroke(); hd(x, 58, 166); ln(x, 16, [[188, 128], [218, 152], [214, 188]]); ln(x, 16, [[188, 128], [226, 136], [238, 168]]); ln(x, 12, [[86, 146], [56, 112]]); }),   // high jump
+  silMat(x => { ln(x, 6, [[30, 250], [118, 120], [160, 30]]); hd(x, 168, 112); ln(x, 24, [[164, 98], [186, 40]]); ln(x, 16, [[186, 40], [196, 8]]); ln(x, 16, [[186, 40], [212, 16]]); ln(x, 12, [[160, 104], [130, 96]]); }),   // pole vault
+  silMat(x => { hd(x, 118, 50); ln(x, 30, [[124, 72], [130, 150]]); ln(x, 18, [[130, 150], [98, 230]]); ln(x, 18, [[130, 150], [172, 226]]); ln(x, 12, [[120, 80], [96, 62]]); hd(x, 88, 56, 13); ln(x, 12, [[132, 84], [180, 104], [206, 86]]); }),   // shot put
+  silMat(x => { ln(x, 6, [[150, 236], [150, 178], [236, 178], [236, 236]]); hd(x, 86, 62); ln(x, 26, [[92, 78], [120, 140]]); ln(x, 18, [[120, 140], [212, 128]]); ln(x, 18, [[120, 140], [92, 172], [140, 190]]); ln(x, 12, [[100, 90], [164, 104]]); ln(x, 12, [[100, 90], [58, 124]]); }),   // hurdles
+  silMat(x => { ln(x, 4, [[18, 70], [246, 150]]); hd(x, 112, 44); ln(x, 26, [[118, 64], [134, 140]]); ln(x, 18, [[134, 140], [176, 196], [204, 236]]); ln(x, 18, [[134, 140], [104, 196], [66, 214]]); ln(x, 12, [[122, 74], [72, 88]]); ln(x, 12, [[122, 74], [170, 64]]); })   // javelin
+];
+let silK = 0;
+const sectorSign = M('sectorSign', 0xffffff, { side: DS, map: canvasTex(128, 224, x => {
+  x.fillStyle = '#f2f2f0'; x.fillRect(0, 0, 128, 224); x.strokeStyle = '#555'; x.lineWidth = 3; x.strokeRect(3, 3, 122, 218); x.fillStyle = '#222'; x.textAlign = 'center';
+  [['NORTH SECTOR (A)', '→', 40], ['EAST SECTOR (B)', '↑', 108], ['SOUTH SECTOR (C)', '←', 176]].forEach(([t, a, y]) => { x.font = 'bold 13px Arial, sans-serif'; x.fillText(t, 64, y); x.font = 'bold 28px Arial, sans-serif'; x.fillText(a, 64, y + 32); });
+}, false) });
+const wcPairMat = M('wcPair', 0xffffff, { side: DS, map: canvasTex(448, 208, x => {   // two recessed washroom lobbies, MALE and FEMALE
+  x.fillStyle = '#efeee9'; x.fillRect(0, 0, 448, 208); x.fillStyle = '#7f8b92'; x.fillRect(0, 112, 448, 96);
+  [[40, 'MALE', 14], [248, 'FEMALE', 104]].forEach(([x0, t, d]) => {
+    x.fillStyle = '#6f7d86'; x.fillRect(x0, 40, 160, 168); x.fillStyle = '#dcdbd6'; x.fillRect(x0 + 16, 46, 128, 64);
+    x.fillStyle = '#4a3a33'; x.fillRect(x0, 180, 160, 28);
+    x.fillStyle = '#f4f5f4'; x.fillRect(x0 + d, 50, 42, 130); x.fillStyle = '#c9cccd'; for (let y = 122; y < 176; y += 6) x.fillRect(x0 + d + 4, y, 34, 3);
+    x.fillStyle = '#fff'; x.fillRect(x0 + d + 5, 76, 32, 14); x.fillStyle = '#c0392b'; x.font = 'bold 9px Arial, sans-serif'; x.textAlign = 'center'; x.fillText(t, x0 + d + 21, 87);
+  });
+}) });
+const washSign = right => M('washSign', 0xffffff, { side: DS, map: canvasTex(128, 80, (x) => {
+  x.fillStyle = '#fbfbf9'; x.fillRect(0, 0, 128, 80); x.fillStyle = '#111'; x.textAlign = 'center'; x.font = 'bold 20px Arial, sans-serif'; x.fillText('WASHROOM', 64, 30);
+  x.fillStyle = '#e8622a'; x.beginPath(); const d = right ? 1 : -1; x.moveTo(64 - 34 * d, 48); x.lineTo(64 + 14 * d, 48); x.lineTo(64 + 14 * d, 40); x.lineTo(64 + 36 * d, 56); x.lineTo(64 + 14 * d, 72); x.lineTo(64 + 14 * d, 64); x.lineTo(64 - 34 * d, 64); x.fill();
+}, false) });
+const washL = washSign(false), washR = washSign(true);
+const louvreBlockMat = M('louvreBlock', 0xffffff, { side: DS, map: canvasTex(128, 64, (x) => {
+  x.fillStyle = '#e9e8e3'; x.fillRect(0, 0, 128, 64); x.fillStyle = '#b9b7b0'; for (let i = 0; i < 128; i += 32) for (let y = 4; y < 64; y += 6) x.fillRect(i + 3, y, 26, 3);
+}) });
+const bigDoorMat = M('bigDoor', 0xffffff, { side: DS, map: canvasTex(128, 112, (x) => {
+  x.fillStyle = '#7b8288'; x.fillRect(0, 0, 128, 112); x.fillStyle = '#6a7177'; for (let y = 6; y < 112; y += 10) x.fillRect(0, y, 128, 2);
+  x.fillStyle = '#4a5055'; x.fillRect(62, 0, 4, 112); x.fillRect(0, 0, 128, 4); x.fillRect(0, 0, 4, 112); x.fillRect(124, 0, 4, 112);
+}) });
+const darkPier = M('darkPier', 0x4f555b), steelRail = M('steelRail', 0xa9afb4, { metalness: 0.5, roughness: 0.4 }), hoseRed = M('hoseReel', 0xc8262b), chamberMat = M('chamber', 0x5f6b72, { side: DS }), doorWhite = M('doorWhite', 0xf2f2ef);
+const hydExtra = [];
+const keep = (u, zones) => !zones.some(([a, b]) => u > a && u < b);
+// u0..u1: extent; voms: tunnel centres; blocks (straight stands only): [seats per row, total or 0 for a tunnel block] in
+// order along the stand, laid out at SEAT pitch with AW aisles. Without blocks, rows are continuous apart from the aisles
+// either side of each tunnel and at the ends.
+function stand(u0, u1, voms, backMat, blocks, sector, rev, known) {   // sector letter for the boards; rev numbers from the u1 end; known: real block ranges
+  const prof = [[R0, YF], [SR0, YF]];
+  for (let k = 0; k < SROWS; k++) prof.push([srowR(k + 1), YF + k * SRISE], [srowR(k + 1), YF + (k + 1) * SRISE]);
+  const rear = [[srowR(4), 2.6], ...prof.slice(9)], cheek = [[SR0, 0], ...prof.slice(1, 9), [srowR(4), 0]];
+  const rMid = (SR0 + srowR(4)) / 2, hu = uc => (OW / 2) / segLen(uc, rMid), pu = uc => (PW / 2) / segLen(uc, R0);
+  const steps = (a, b, p) => { if (b > a + 1e-6) mesh(shadeSteps(band(a, b, p, A), 0xc3c6c8, 0xa2a7ab), mat.seat, S); };
+  let u = u0;
+  voms.forEach(uc => {
+    const h = hu(uc);
+    steps(u, uc - h, prof);
+    mesh(band(uc - h, uc + h, prof.slice(0, 2), A), mat.concrete, S);   // front walkway runs past the opening
+    steps(uc - h, uc + h, rear);
+    [uc - h, uc + h].forEach(e => cap(e, cheek, A, mat.white, S));
+    // a passage from the colonnade outside runs in under the seats to the foot of a flight that climbs to the front walkway
+    const n = 11, run = (srowR(4) - SR0) / n, drop = YF / n;
+    for (let i = 0; i < n; i++) { const top = YF - i * drop; placeAt(uc, SR0 + (i + 0.5) * run, 0, top / 2, OW - 0.12, top, run + 0.02, mat.concrete); }
+    [-1, 1].forEach(s => placeAt(uc, (srowR(4) + RCB) / 2, s * (OW / 2 + 0.12), 1.3, 0.24, 2.6, RCB - srowR(4), mat.white));
+    placeAt(uc, (srowR(4) + RCB) / 2, 0, 2.7, OW + 0.48, 0.2, RCB - srowR(4), mat.white);
+    // white rails along both sides of the well and across the back
+    const P3 = (uu, r, y) => { const [x, z] = pp(uu, r, A); return [x, y, z]; };
+    [-1, 1].forEach(s => [1.0, 0.55].forEach(y => bar3(P3(uc + s * h, SR0, YF + y), P3(uc + s * h, srowR(4), YF + 3 * SRISE + y), 0.06, mat.white)));
+    bar3(P3(uc - h, srowR(4) + 0.05, YF + 4 * SRISE + 1), P3(uc + h, srowR(4) + 0.05, YF + 4 * SRISE + 1), 0.06, mat.white);
+    // platform over the pitch
+    placeAt(uc, R0 - PD / 2, SOFF + 0.45, PW, 0.9, PD, fasciaMat);
+    [[-1, R0 - PD + 0.25], [1, R0 - PD + 0.25], [-1, R0 + 0.3], [1, R0 + 0.3]].forEach(([s, r]) => placeAt(uc, r, s * (PW / 2 - 0.3), SOFF / 2, 0.45, SOFF, 0.45, colGrey));
+    placeAt(uc, R0 - PD + 0.03, 0, YF + 0.55, PW, 1.05, 0.04, standGlass).castShadow = false;
+    [-1, 1].forEach(s => { placeAt(uc, R0 - PD / 2, s * (PW / 2 - 0.03), YF + 0.55, 0.04, 1.05, PD, standGlass).castShadow = false; });
+    [[-1, R0 - PD], [1, R0 - PD], [-1, R0 - PD / 2], [1, R0 - PD / 2]].forEach(([s, r]) => placeAt(uc, r, s * (PW / 2 - 0.05), YF + 0.1, 0.08, 1.9, 0.08, standPost));
+    u = uc + h;
+  });
+  steps(u, u1, prof);
+  // under the deck: soffit, fascia, rooms set back behind the columns; glass along the front except at the platforms
+  const plat = voms.map(uc => [uc - pu(uc), uc + pu(uc)]);
+  mesh(band(u0, u1, [[R0, SOFF], [RW, SOFF]], A), fasciaMat, S);
+  mesh(band(u0, u1, [[R0, SOFF], [R0, YF]], A), fasciaMat, S);
+  mesh(band(u0, u1, [[RW, 0], [RW, SOFF]], A, { tile: 12 }), roomMat, S);
+  let g0 = u0;
+  [...plat, [u1, u1]].forEach(([a, b]) => { if (a > g0) { const gl = mesh(band(g0, a, [[R0 - 0.06, YF], [R0 - 0.06, YF + 1.05]], A), standGlass, S); gl.castShadow = false; } g0 = b; });
+  const along = (r, step, fn) => { for (let v = u0 + (step / 2) / segLen(u0, r); v < u1; v += step / segLen(v, r)) fn(v); };
+  along(R0 + 0.3, 5.6, v => { if (keep(v, plat)) { const [x, z] = pp(v, R0 + 0.3, A); colPts.push([x, z]); } });
+  along(R0 - 0.1, 1.6, v => { if (keep(v, plat)) { const [x, z] = pp(v, R0 - 0.1, A); postPts.push([x, z, facing(v, R0)]); } });
+  // top walkway with a mesh fence along the back
+  mesh(band(u0, u1, [[SR1, H1], [RF, H1]], A), mat.concrete, S);
+  mesh(band(u0, u1, [[RF - 0.15, H1 + 1.2], [RF - 0.15, H1 + 2.4]], A, { tile: 1.6 }), fenceMat, S);
+  // outside: cladding over a colonnade at pitch level; rooms set back behind grey columns, broken by the tunnel passages;
+  // where the road falls away the colonnade edge becomes a parapet with a maroon rail, over a tiled retaining wall
+  mesh(band(u0, u1, [[RF, SOFB], [RF, H1 + 1.2]], A, { tile: 40 }), backMat, S);
+  mesh(band(u0, u1, [[RCB, SOFB], [RF, SOFB]], A), soffitMat, S);
+  // east stand: by each tunnel, a stair from the colonnade down to a chamber under it, entered from the road through an
+  // opening in the tiled base (site photos); on the side towards the middle of the stand
+  const tP = OW / 2 + 0.24, FL = LOWR + 0.3, tU = t => t / (2 * A);
+  const EF = blocks ? voms.map(uc => ({ uc, dir: uc < (u0 + u1) / 2 ? 1 : -1 })) : [];
+  const urange = (f, a, b) => [f.uc + tU(f.dir * a), f.uc + tU(f.dir * b)].sort((p, q) => p - q);
+  const holeR = EF.map(f => urange(f, tP + 0.6, tP + 4.8)), openR = EF.map(f => urange(f, tP + 3.2, tP + 7.6));
+  EF.forEach(f => { const xc = -A + 2 * A * f.uc, xa = xc + f.dir * (tP + 0.6), xb = xc + f.dir * (tP + 4.8); floorHoles.push([Math.min(xa, xb), -(RCB + 1.5), Math.max(xa, xb), -RCB]); });
+  let p0 = u0;
+  [...holeR, [u1, u1]].forEach(([a, b]) => {
+    if (a > p0) mesh(band(p0, a, [[RCB, 0.06], [RF + 0.35, 0.06]], A, { tile: 3 }), paverMat, S);
+    if (b > a) mesh(band(a, b, [[RCB + 1.5, 0.06], [RF + 0.35, 0.06]], A, { tile: 3 }), paverMat, S);
+    p0 = b;
+  });
+  EF.forEach(({ uc, dir }) => {
+    const T = d => dir * d, nS = 15, rise = (0.05 - FL) / nS, tr = 0.28, P3 = (r, t, y) => { const [x, z] = onRow(uc, r, t); return [x, y, z]; };
+    for (let i = 0; i < nS - 1; i++) { const top = 0.05 - (i + 1) * rise; placeAt(uc, RCB + 0.77, T(tP + 0.6 + (i + 0.5) * tr), (top + FL) / 2, tr + 0.02, top - FL, 1.4, mat.concrete); }
+    const cw = RF + 0.33 - RCB, cr = (RCB + RF + 0.33) / 2, ch = 0.05 - FL;
+    placeAt(uc, cr, T(tP + 4.3), FL - 0.05, 7.8, 0.1, cw, mat.concrete);                     // chamber floor
+    placeAt(uc, RCB - 0.1, T(tP + 4.3), (FL + 0.05) / 2, 7.8, ch, 0.2, chamberMat);         // back wall
+    [tP + 0.4, tP + 8.2].forEach(d => placeAt(uc, cr, T(d), (FL + 0.05) / 2, 0.2, ch, cw, chamberMat));
+    placeAt(uc, RF + 0.6, T(tP + 5.4), (FL + LOWR) / 2, 4.4, FL - LOWR, 0.6, mat.concrete);   // step up from the footpath
+    // rails round the stairwell on the colonnade
+    [0.6, 1.06].forEach(y => bar3(P3(RCB + 1.55, T(tP + 0.6), y), P3(RCB + 1.55, T(tP + 4.8), y), 0.05, steelRail));
+    [0.6, 1.06].forEach(y => bar3(P3(RCB, T(tP + 4.85), y), P3(RCB + 1.55, T(tP + 4.85), y), 0.05, steelRail));
+    for (let d = tP + 0.7; d <= tP + 4.8; d += 1.35) placeAt(uc, RCB + 1.55, T(d), 0.56, 0.05, 1.0, 0.05, steelRail);
+    // sector sign and hydrant beside the opening
+    placePlane(uc, RF + 0.36, T(tP + 8.3), LOWR + 1.75, 0.42, 0.66, sectorSign);
+    { const [x, z] = onRow(uc, RF + 0.8, T(tP + 8.95)); hydExtra.push([x, z, ringY(uc)]); }
+  });
+  const openU = uc => (OW / 2 + 0.24) / segLen(uc, RCB);
+  let w0 = u0;
+  [...voms.map(uc => [uc - openU(uc), uc + openU(uc)]), [u1, u1]].forEach(([a, b]) => { if (a > w0) vband(w0, a, RCB, 0, SOFB, roomsOutMat, 12); if (b > a) vband(a, b, RCB, 2.6, SOFB, mat.white); w0 = b; });
+  if (blocks) {
+    // north end of the base: an open bay (stores) with louvred vents inside, a pair of large grey doors, a hydrant between
+    const bu = u0 + tU(6.0), bw = 6.0, cw = RF + 0.33 - RCB, cr = (RCB + RF + 0.33) / 2, ch = 0.05 - (LOWR + 0.15);
+    openR.push([u0 + tU(3.0), u0 + tU(9.0)]); openR.sort((a, b) => a[0] - b[0]);
+    placeAt(bu, cr, 0, LOWR + 0.1, bw + 0.4, 0.1, cw, mat.concrete);
+    placeAt(bu, RCB - 0.1, 0, (LOWR + 0.2) / 2, bw + 0.4, ch, 0.2, chamberMat);
+    [-1, 1].forEach(s => placeAt(bu, cr, s * (bw / 2 + 0.2), (LOWR + 0.2) / 2, 0.2, ch, cw, chamberMat));
+    placePlane(bu, RCB + 0.02, -1.4, LOWR + 1.75, 2.4, 1.2, louvreBlockMat);
+    placePlane(u0 + tU(12.0), RF + 0.36, 0, LOWR + 1.4, 3.0, 2.5, bigDoorMat);
+    { const [x, z] = onRow(u0 + tU(10.3), RF + 0.8, 0); hydExtra.push([x, z, ringY(u0)]); }
+  }
+  let o0 = u0;
+  [...openR, [u1, u1]].forEach(([a, b]) => { if (a > o0) vband(o0, a, RF + 0.33, ringY, 0.06, tileMat, 2.4, 2.4); if (b > a) vband(a, b, RF + 0.33, FL + 2.3, 0.06, tileMat, 2.4, 2.4); o0 = b; });
+  const lowR = [];
+  for (let i = 0, st = null; i <= 240; i++) { const v = u0 + (u1 - u0) * i / 240, lo = ringY(v) < -0.25; if (lo && st === null) st = v; if (st !== null && (!lo || i === 240)) { lowR.push([st, v]); st = null; } }
+  lowR.forEach(([a, b]) => {
+    vband(a, b, RF + 0.2, 0.06, 1.0, parapetMat);
+    mesh(band(a, b, [[RF + 0.05, 1.0], [RF + 0.35, 1.0]], A), parapetMat, S);
+    vband(a, b, RF + 0.2, 1.12, 1.19, maroonMat);
+    for (let v = a; v < b; v += 1.8 / segLen(v, RF)) { const [x, z] = pp(v, RF + 0.2, A); railPts.push([x, z]); }
+  });
+  along(RF - 0.35, 5.6, v => { const [x, z] = pp(v, RF - 0.35, A); outColPts.push([x, z, facing(v, RF)]); });
+  along(RF - 0.1, 12, v => { const [x, z] = pp(v, RF - 0.1, A); flagPts.push([x, z]); });
+  along(RF + 0.07, 30, v => { const [x, z] = pp(v, RF + 0.07, A), p = new THREE.Mesh(silGeo, SILS[silK++ % SILS.length]); p.position.set(x, (SOFB + H1) / 2 + 0.8, z); p.rotation.y = facing(v, RF) + Math.PI; S.add(p); });
+  if (blocks) {
+    // east stand: male and female washrooms on both sides of each tunnel, a fire hose reel by the end-block board
+    EF.forEach(({ uc, dir }) => {
+      [tP + 11.7, -(tP + 5.5)].forEach(d => { placePlane(uc, RCB + 0.03, dir * d, 1.3, 5.6, 2.6, wcPairMat); placeAt(uc, RCB + 0.55, dir * (d + Math.sign(d) * 3.4), 0.56, 0.75, 1.0, 0.65, binGreen); });
+      placeAt(uc, RCB + 0.16, -dir * (tP + 1.5), 1.35, 0.8, 0.8, 0.26, hoseRed);
+      placeAt(uc, RCB + 0.1, -dir * (tP + 1.5), 0.48, 0.07, 0.95, 0.07, hoseRed);
+    });
+  } else {
+    // a set of washrooms (gents, accessible, ladies) between each pair of tunnels, with a recycling bin beside it
+    const stops = [u0, ...voms, u1];
+    stops.slice(1).forEach((b, i) => { const v = (stops[i] + b) / 2; placePlane(v, RCB + 0.03, 0, 1.3, 7.2, 2.6, washMat); placeAt(v, RCB + 0.55, 4.6, 0.56, 0.75, 1.0, 0.65, binGreen); });
+  }
+  const capProf = [[RW, 0], [RW, SOFF], [R0, SOFF], ...prof, [RF, H1], [RF, SOFB], [RCB, SOFB], [RCB, 0]];
+  cap(u0, capProf, A, mat.white, S); cap(u1, capProf, A, mat.white, S);
+  // seats
+  const us = [], add = (v, k, rs) => { const [x, z] = pp(v, rs, A); seatPts.push([x, YF + k * SRISE + 0.21, z, facing(v, rs)]); us.push(v); };
+  const counts = [];
+  if (blocks) {
+    const L = (u1 - u0) * 2 * A, used = blocks.reduce((s, [n]) => s + n * SEAT, 0) + (blocks.length - 1) * AW;
+    let s = (L - used) / 2;
+    blocks.forEach(([n, total]) => {
+      let c = 0;
+      for (let k = total ? 0 : 4; k < SROWS; k++) {
+        const m = total ? Math.min(n, total - n * k) : n, rs = srowR(k) + 0.6;
+        for (let i = 0; i < m; i++) { add(u0 + (s + (n - m) * SEAT / 2 + (i + 0.5) * SEAT) / (2 * A), k, rs); c++; }
+      }
+      counts.push(c); s += n * SEAT + AW;
+    });
+  } else {
+    let c = 0;
+    for (let k = 0; k < SROWS; k++) {
+      const rs = srowR(k) + 0.6, Le = AW / segLen(u0, rs);
+      const zones = [[u0 - 1, u0 + Le], [u1 - Le, u1 + 1], ...voms.map(uc => { const h = hu(uc), a = AW / segLen(uc, rs); return k <= 3 ? [uc - h - a, uc + h + a] : null; }).filter(Boolean),
+        ...(k > 3 ? voms.flatMap(uc => { const h = hu(uc), a = AW / segLen(uc, rs); return [[uc - h - a, uc - h + 0.05 / segLen(uc, rs)], [uc + h - 0.05 / segLen(uc, rs), uc + h + a]]; }) : [])];
+      along(rs, SEAT, v => { if (keep(v, zones)) { add(v, k, rs); c++; } });
+    }
+    counts.push(c);
+  }
+  if (blocks) {
+    // east stand: a pier either side of each tunnel carrying the board for the numbered block on that side
+    const ranges = []; let nb = 1;
+    blocks.forEach(([, total]) => { if (total) { ranges.push([nb, nb + total - 1]); nb += total; } });
+    voms.forEach((uc, i) => [[-1, ranges[i]], [1, ranges[i + 1]]].forEach(([s, rg]) => {
+      placeAt(uc, RCB + 0.25, s * (tP + 0.35), (0.06 + SOFB) / 2, 0.4, SOFB - 0.06, 0.5, darkPier);
+      placePlane(uc, RCB + 0.51, s * (tP + 0.35), 1.75, 0.36, 0.3, boardMat(sector, ...rg));
+    }));
+    return counts;
+  }
+  // curved stands: a pier either side of each tunnel carrying the board for the block of seats on that side, with a
+  // washroom arrow under it; blocks numbered from the `rev` end, using the real ranges where known (site photos) and
+  // continuing from our own seat count for the rest
+  const nB = voms.length + 1, cnt = Array(nB).fill(0);
+  us.forEach(v => { cnt[voms.filter(uc => uc < v).length]++; });
+  const order = [...Array(nB).keys()]; if (rev) order.reverse();
+  const rng = []; let nx = 1;
+  order.forEach((bi, k) => { rng[bi] = (known && known[k]) || [nx, nx + cnt[bi] - 1]; nx = rng[bi][1] + 1; });
+  voms.forEach((uc, i) => [[-1, i], [1, i + 1]].forEach(([s, bi]) => {
+    placeAt(uc, RCB + 0.25, s * (tP + 0.35), (0.06 + SOFB) / 2, 0.4, SOFB - 0.06, 0.5, darkPier);
+    placePlane(uc, RCB + 0.51, s * (tP + 0.35), 1.75, 0.36, 0.3, boardMat(sector, ...rng[bi]));
+    placePlane(uc, RCB + 0.51, s * (tP + 0.35), 1.4, 0.36, 0.22, s > 0 ? washL : washR);
+  }));
+  return counts;
+}
+// east stand, per the seating plan (1217 numbered seats): 231 | tunnel | 691 | tunnel | 295, tunnels with 7 rows of 10 behind
+const EAST_BLOCKS = [[21, 231], [10, 0], [63, 691], [10, 0], [27, 295]];
+const eastVoms = (() => {
+  const u0 = 0.075, u1 = 0.925, L = (u1 - u0) * 2 * A, used = EAST_BLOCKS.reduce((s, [n]) => s + n * SEAT, 0) + (EAST_BLOCKS.length - 1) * AW, out = [];
+  let s = (L - used) / 2;
+  EAST_BLOCKS.forEach(([n, total]) => { if (!total) out.push(u0 + (s + n * SEAT / 2) / (2 * A)); s += n * SEAT + AW; });
+  return out;
+})();
+const SEAT_COUNTS = {
+  east: stand(0.075, 0.925, eastVoms, claddingMat, EAST_BLOCKS, 'B'),       // sector B, free-standing, gaps either end
+  south: stand(0.995, 2.005, [1.25, 1.5, 1.75], claddingMat, null, 'C', true, [[1, 1051], [1052, 2127], [2128, 3204]]),  // sector C, numbered from the grandstand end
+  north: stand(2.995, 4.005, [3.25, 3.5, 3.75], claddingMat, null, 'A', false, [[1, 990], [991, 2020], [2021, 3059]])  // sector A, numbered from the grandstand end
+};
+{
+  const o = new THREE.Object3D();
+  const inst = (geo, m, pts, set) => { const im = new THREE.InstancedMesh(geo, m, pts.length); pts.forEach((p, i) => { set(o, p); o.updateMatrix(); im.setMatrixAt(i, o.matrix); }); im.castShadow = im.receiveShadow = true; S.add(im); };
+  inst(new THREE.BoxGeometry(0.46, 0.42, 0.42), M('seatGreen', 0x2f7d63), seatPts, (o, [x, y, z, r]) => { o.position.set(x, y, z); o.rotation.set(0, r, 0); });
+  inst(new THREE.BoxGeometry(0.45, SOFF, 0.45), colGrey, colPts, (o, [x, z]) => { o.position.set(x, SOFF / 2, z); o.rotation.set(0, 0, 0); });
+  inst(new THREE.BoxGeometry(0.08, 1.9, 0.08), standPost, postPts, (o, [x, z, r]) => { o.position.set(x, YF + 0.1, z); o.rotation.set(0, r, 0); });
+  // outside: colonnade columns with number plates, rail posts on the raised walkway, flagpoles along the top of the cladding
+  inst(new THREE.BoxGeometry(0.5, SOFB, 0.6), colGrey, outColPts, (o, [x, z, r]) => { o.position.set(x, SOFB / 2 + 0.06, z); o.rotation.set(0, r, 0); });
+  inst(new THREE.BoxGeometry(0.2, 0.16, 0.62), M('plate', 0x24272a), outColPts, (o, [x, z, r]) => { o.position.set(x, 1.7, z); o.rotation.set(0, r, 0); });
+  inst(new THREE.BoxGeometry(0.05, 0.14, 0.05), maroonMat, railPts, (o, [x, z]) => { o.position.set(x, 1.07, z); o.rotation.set(0, 0, 0); });
+  inst(new THREE.CylinderGeometry(0.03, 0.04, 4, 6), mat.steel, flagPts, (o, [x, z]) => { o.position.set(x, H1 + 3.2, z); o.rotation.set(0, 0, 0); });
+}
+// the verge between the stands and the road: footpath, grass and kerbstones, with red fire hydrants, manhole covers and
+// single-arm street lamps along it (site photos)
+{
+  mesh(band(...ringU, [[RF + 0.35, 0.15], [RF + 1.3, 0.15]], A, { yFn: ringY, res: 300 }), M('footpath', 0xc9c5bb), S);
+  mesh(band(...ringU, [[RF + 1.3, 0.13], [RR - 3.7, 0.13]], A, { yFn: ringY, res: 300 }), M('verge', 0x86a256), S);
+  mesh(band(...ringU, [[RR - 3.7, 0.21], [RR - 3.45, 0.21]], A, { yFn: ringY, res: 300 }), M('kerbStone', 0xcfcbc2), S);
+  const hyd = [[-50, 82.2, 0], [50, 82.2, 0], ...hydExtra], man = [], o = new THREE.Object3D();   // a hydrant at each grandstand-end junction too
+  const alongRing = (r, step, off, fn) => { for (let v = ringU[0] + off / segLen(ringU[0], r); v < ringU[1]; v += step / segLen(v, r)) fn(v); };
+  alongRing(RF + 0.9, 38, 12, v => { const [x, z] = pp(v, RF + 0.9, A); hyd.push([x, z, ringY(v)]); });
+  alongRing(RF + 0.8, 24, 4, v => { const [x, z] = pp(v, RF + 0.8, A); man.push([x, z, ringY(v), facing(v, RF)]); });
+  const inst = (geo, m, pts, set) => { const im = new THREE.InstancedMesh(geo, m, pts.length); pts.forEach((p, i) => { set(o, p); o.updateMatrix(); im.setMatrixAt(i, o.matrix); }); im.castShadow = im.receiveShadow = true; S.add(im); };
+  const red = M('hydrant', 0xd3262b);
+  inst(new THREE.CylinderGeometry(0.11, 0.13, 0.75, 10), red, hyd, (o, [x, z, y]) => { o.position.set(x, y + 0.45, z); o.rotation.set(0, 0, 0); });
+  inst(new THREE.SphereGeometry(0.13, 10, 6), red, hyd, (o, [x, z, y]) => { o.position.set(x, y + 0.84, z); o.rotation.set(0, 0, 0); });
+  inst(new THREE.CylinderGeometry(0.05, 0.05, 0.42, 8), red, hyd, (o, [x, z, y]) => { o.position.set(x, y + 0.62, z); o.rotation.set(0, 0, Math.PI / 2); });
+  inst(new THREE.BoxGeometry(0.8, 0.04, 0.8), M('manhole', 0xbdb9b0), man, (o, [x, z, y, r]) => { o.position.set(x, y + 0.11, z); o.rotation.set(0, r, 0); });
+  alongRing(RR - 4.0, 42, 20, v => {
+    const y = ringY(v), f = facing(v, RR), [x, z] = pp(v, RR - 4.0, A), [ax, az] = pp(v, RR - 2.6, A);
+    box(0.14, 8, 0.14, mat.steel, x, y + 4, z, S);
+    box(0.08, 0.08, 1.5, mat.steel, (x + ax) / 2, y + 8, (z + az) / 2, S).rotation.y = f;   // arm out over the road
+    box(0.5, 0.12, 0.26, mat.lamp, ax, y + 7.95, az, S).rotation.y = f;
+  });
+}
 
-// main grandstand (south)
+// main grandstand (west side), modelled on site photos: rooms under a raised seating deck, a recessed terrace with the
+// VVIP lounge, glazed boxes above, under a cantilevered steel roof. Local x runs along the stand; z from the pitch (55) back to 81.
 {
   const G = new THREE.Group(); S.add(G);
-  const rows = 12, z0 = 55, z1 = 69, dz = (z1 - z0) / rows, dh = (12 - 1.4) / rows;
-  for (let k = 0; k < rows; k++) {
-    const h = 1.4 + k * dh, z = z0 + k * dz + dz / 2;
-    box(21, h, dz, mat.seatRed, -19.5, h / 2, z, G); box(18, h, dz, mat.seatBlue, 0, h / 2, z, G); box(21, h, dz, mat.seatRed, 19.5, h / 2, z, G);
+  const SH = new THREE.Group(); G.add(SH); cutaway.push(SH);   // upper floors, louvres, columns and entrance-level enclosure
+  const pink = M('podium', 0xd4a99c), stepMat = M('steps', 0xa9adb1), seatR = M('seatRed2', 0xc63f42), seatV = M('seatVvip', 0x3c434d);
+  const postMat = M('post', 0x6d737a, { metalness: 0.4, roughness: 0.5 }), steelLt = M('stainless', 0xdfe3e6, { metalness: 0.6, roughness: 0.3 });
+  const glassC = new THREE.MeshStandardMaterial({ color: 0xcfe3e8, transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0.1, depthWrite: false });
+  const winMat = M('gsWin', 0x55656f, { roughness: 0.15, metalness: 0.35, transparent: true, opacity: 0.88 });
+  const doorMat = M('gsDoor', 0x8f969c), lightMat = new THREE.MeshBasicMaterial({ color: 0xfff4d6 }), speakerMat = M('speaker', 0x1c1e21);
+  const roofMat = M('gsRoof', 0xe2e4e6, { side: DS, emissive: 0x2a2b2c }), beamMat = M('gsBeam', 0x9aa0a6, { metalness: 0.3, roughness: 0.6, emissive: 0x1a1b1c });
+  const curtain = M('curtain', 0xffffff, { map: canvasTex(128, 64, (x) => { x.fillStyle = '#8b8e90'; x.fillRect(0, 0, 128, 64); x.fillStyle = '#6f7275'; for (let i = 0; i < 128; i += 6) x.fillRect(i, 0, 3, 64); }) });
+  const gold = M('arms', 0xc9a43a, { metalness: 0.6, roughness: 0.35 });
+  const drainMat = M('drain', 0xffffff, { map: canvasTex(128, 32, (x) => { x.fillStyle = '#cfcac0'; x.fillRect(0, 0, 128, 32); x.fillStyle = '#5e5a55'; for (let i = 4; i < 128; i += 16) x.fillRect(i, 9, 9, 14); }) });
+  const glass = (w, h, d, x, y, z, m = glassC) => { const g = box(w, h, d, m, x, y, z, G); g.castShadow = false; return g; };
+  const bar = (x, y0, z0, y1, z1, t, m) => { const b = box(t, t, Math.hypot(y1 - y0, z1 - z0), m, x, (y0 + y1) / 2, (z0 + z1) / 2, G); b.rotation.x = -Math.atan2(y1 - y0, z1 - z0); b.castShadow = false; return b; };
+  // 11 rows on a deck at +2.80 (seating plan; as-built layout for the deck level)
+  const ROWS = 11, DZ = 0.95, RISE = 0.55, Z0 = 55.6, Y0 = 2.8, rowTop = k => Y0 + k * RISE, rowZ = k => Z0 + k * DZ;
+  const SX0 = 24.4, SX1 = 28;   // stairwell between |x| SX0 and SX1, solid end block beyond
+  const ZT = rowZ(ROWS), YT = rowTop(ROWS - 1) + 0.5, ZB = ZT + 3.7, Z3 = ZT + 0.4, ROOM = 2.2;   // terrace edge, floor, back; upper-level face; room height
+
+  // ground floor: dusty-pink podium on columns; rooms either flush with the front or set back behind a covered walkway
+  box(62.6, Y0 - ROOM, 0.7, pink, 0, (Y0 + ROOM) / 2, 55.35, G);
+  for (let i = 0; i <= 10; i++) box(0.7, ROOM, 0.7, pink, -31 + i * 6.2, ROOM / 2, 55.35, G);
+  box(62, ROOM, ZB - 59, mat.white, 0, ROOM / 2, (59 + ZB) / 2, G);   // rooms behind the walkway
+  const door = (x, z) => box(1.0, 1.95, 0.06, doorMat, x, 0.975, z, G);
+  const win = (x, z, y = 1.35, w = 0.8) => { box(w + 0.15, w + 0.15, 0.04, mat.white, x, y, z + 0.02, G); box(w, w, 0.05, winMat, x, y, z, G); };
+  [...'FFRFRRFRFF'].forEach((t, i) => {
+    const xc = -27.9 + i * 6.2;
+    if (t === 'F') { box(5.5, ROOM, 0.3, mat.white, xc, ROOM / 2, 55.9, G); door(xc - 1.4, 55.72); win(xc + 1.1, 55.72); }
+    else { door(xc - 1.7, 58.97); win(xc, 58.97); door(xc + 1.5, 58.97); box(0.14, ROOM, 0.14, postMat, xc - 2.7, ROOM / 2, 55.8, G); }   // downpipe
+  });
+  // north-end pair of rooms, framed in pink and standing a little proud
+  box(6.2, 0.4, 1.0, pink, -27.9, ROOM - 0.2, 54.9, G); [-30.7, -25.1].forEach(x => box(0.6, ROOM, 1.0, pink, x, ROOM / 2, 54.9, G));
+  box(0.5, ROOM, 1.0, pink, -27.9, ROOM / 2, 54.9, G); door(-29.3, 55.38); win(-26.5, 55.38, 1.25, 1.0);
+
+  // lower tier on top of the rooms: grey concrete steps, individual red seats, VVIP block of dark seats in the middle
+  const WELLS = [-15.6, 15.6], WH = 1.3, W0 = 0, W1 = 3;   // stair wells down to the walkway, rows W0..W1, inside the seating
+  const inWell = (x, k) => k >= W0 && k <= W1 && WELLS.some(h => Math.abs(x - h) < WH + 0.25);
+  for (let k = 0; k < ROWS; k++) {
+    let x = -31;
+    [...(k >= W0 && k <= W1 ? WELLS.map(h => [h - WH, h + WH]) : []), [31, 31]].forEach(([a, b]) => {
+      if (a > x) box(a - x, rowTop(k) - ROOM, DZ, stepMat, (a + x) / 2, (rowTop(k) + ROOM) / 2, rowZ(k) + DZ / 2, G);
+      x = b;
+    });
   }
-  box(62, 20, 12, mat.white, 0, 10, 75, G);
-  box(58, 3.2, 0.4, mat.glass, 0, 15.5, 68.9, G);
-  box(58, 1.4, 0.4, mat.glass, 0, 19.2, 81.1, G);
-  [-1, 1].forEach(s => box(1.2, 22, 30, mat.white, s * 31.4, 11, 66, G));
-  const roof = box(68, 0.8, 34, mat.roof, 0, 23.4, 64, G); roof.rotation.x = -0.035;
-  box(68, 1.8, 0.6, mat.roof, 0, 23.6, 47.2, G);
-  for (let x = -30; x <= 30; x += 10) box(0.5, 3, 0.5, mat.steel, x, 21.5, 80.5, G);
-  // rear: curved steel ribs, roof lip, entrances and apron
-  const ribMat = M('ribs', 0x8b9096, { roughness: 0.6, metalness: 0.3 });
-  for (let x = -32; x <= 32.1; x += 4) {
-    const c = new THREE.CubicBezierCurve3(new THREE.Vector3(x, 0, 85), new THREE.Vector3(x, 9, 89.5), new THREE.Vector3(x, 19, 88), new THREE.Vector3(x, 23.6, 81));
-    const rib = new THREE.Mesh(new THREE.TubeGeometry(c, 24, 0.55, 6), ribMat); rib.scale.x = 0.6; rib.position.x = x * 0.4; rib.castShadow = true; G.add(rib);
-  }
-  const lip = box(68, 0.6, 7, mat.roof, 0, 22.6, 83.6, G); lip.rotation.x = 0.35;
-  [-26, -14, -2, 10, 22].forEach(x => { box(3.4, 3.2, 0.12, M('door', 0x2a2e33), x, 1.6, 81.06, G); box(4.4, 0.4, 0.3, mat.concrete, x, 3.4, 81.15, G); });
-  box(60, 1.2, 0.1, mat.glass, 0, 9, 81.06, G); box(60, 1.2, 0.1, mat.glass, 0, 13.5, 81.06, G);
-  rect(-36, 81, 36, 91, mat.concrete, 0.078, G);
+  box(62, YT - 0.4, ZB - ZT, mat.white, 0, (YT - 0.4) / 2, (ZT + ZB) / 2, G);   // fill under the terrace
+  box(62, 0.4, ZB - ZT, mat.concrete, 0, YT - 0.2, (ZT + ZB) / 2, G);   // terrace floor
+  // seating blocks per the seating plan, centre outwards: VVIP (91, dark) with the presidential rows behind it (38), an inner
+  // red block each side (149 / 150, its front row running across in front of the VVIP), a 5-wide block behind each stair
+  // well (35), and an outer red block (220 = 11 rows of 20). Row 0 is clear in front of the inner blocks and the VVIP.
+  const BLOCKS = [[-4.4, 4.4], ...[1, -1].flatMap(sg => [[5.6, 12.5], [14.3, 16.9], [18.9, 29.3]].map(([a, c]) => sg > 0 ? [a, c] : [-c, -a]))];
+  const red = [], dark = [];
+  const row = (list, k, a, c, n) => { const p = (c - a) / n; for (let i = 0; i < n; i++) list.push([a + (i + 0.5) * p, rowTop(k) + 0.21, rowZ(k) + 0.55]); };
+  [1, -1].forEach(sg => {
+    const X = ([a, c]) => sg > 0 ? [a, c] : [-c, -a];
+    for (let k = 0; k < ROWS; k++) row(red, k, ...X([18.9, 29.3]), 20);                       // outer: 220
+    for (let k = W1 + 1; k < ROWS; k++) row(red, k, ...X([14.3, 16.9]), 5);                     // behind the well: 35
+    for (let k = 2; k < ROWS; k++) row(red, k, ...X([5.6, 12.5]), 14);                          // inner: 9 x 14
+    row(red, 1, ...X([sg > 0 ? 0.55 : 0.8, 12.5]), sg > 0 ? 24 : 23);                            // + front row: 150 / 149
+  });
+  for (let k = 2; k < 8; k++) row(dark, k, -4.4, 4.4, k === 7 ? 16 : 15);                        // VVIP: 91
+  [8, 9].forEach(k => [-2.9, 0, 2.9].forEach(c => row(dark, k, c - 1.3, c + 1.3, 5)));          // presidential: 30
+  row(dark, 10, -2.4, 2.4, 8);                                                                   // + 8
+  const seatGeo = new THREE.BoxGeometry(0.44, 0.42, 0.4);
+  [[red, seatR], [dark, seatV]].forEach(([pts, m]) => {
+    const im = new THREE.InstancedMesh(seatGeo, m, pts.length), o = new THREE.Object3D();
+    pts.forEach((p, i) => { o.position.set(...p); o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
+    im.castShadow = im.receiveShadow = true; G.add(im);
+  });
+  [-18, 18].forEach(x => bar(x, rowTop(0) + 1.0, rowZ(0) + 0.3, rowTop(ROWS - 1) + 1.0, ZT - 0.3, 0.07, mat.white));   // aisle handrails
+  WELLS.forEach(h => {
+    // flight climbs from the walkway underneath and comes out at the front of the block, level with the first row
+    const zf = rowZ(W0), zb = rowZ(W1 + 1), n = 8, run = (zb - zf) / n;
+    for (let i = 0; i < n; i++) { const top = rowTop(0) - 0.3 * i; box(2 * WH, top, run, stepMat, h, top / 2, zf + (i + 0.5) * run, G); }
+    [h - WH, h + WH].forEach(x => {
+      [1.0, 0.55].forEach(hh => bar(x, rowTop(W0) + hh, zf, rowTop(W1 + 1) + hh, zb, 0.06, mat.white));
+      for (let k = W0; k <= W1 + 1; k += 2) box(0.07, 1.0, 0.07, mat.white, x, rowTop(k) + 0.5, rowZ(k) + 0.1, G);
+    });
+    box(2 * WH, 0.06, 0.06, mat.white, h, rowTop(W1 + 1) + 1.0, zb + 0.05, G);
+  });
+  // end aisles beside the end walls, fed by the outside stairs; white rail with three bars as on site
+  [-29.5, 29.5].forEach(x => {
+    [1.0, 0.65, 0.3].forEach(hh => bar(x, rowTop(0) + hh, rowZ(0) + 0.2, rowTop(ROWS - 1) + hh, ZT - 0.2, 0.05, mat.white));
+    for (let k = 0; k < ROWS; k += 3) box(0.07, 1.0, 0.07, mat.white, x, rowTop(k) + 0.5, rowZ(k) + 0.3, G);
+  });
+  // glass balustrade along the front edge, on grey posts fixed to the podium face
+  glass(62, 1.05, 0.05, 0, Y0 + 0.55, 55.05);
+  for (let x = -30.8; x <= 31; x += 1.55) box(0.1, 1.9, 0.08, postMat, x, Y0 + 0.15, 54.97, G);
+  // glass screens round the VVIP seats
+  glass(9.6, 1.1, 0.05, 0, rowTop(1) + 0.55, rowZ(2));
+  [-4.8, 4.8].forEach(x => { const g = glass(0.05, 1.1, Math.hypot(ZT - rowZ(2), rowTop(ROWS - 1) - rowTop(2)), x, (rowTop(2) + rowTop(ROWS - 1)) / 2 + 0.55, (rowZ(2) + ZT) / 2); g.rotation.x = -Math.atan2(RISE, DZ); });
+
+  // terrace level: recessed walkway under the floor above, steel-and-glass balustrade, glass doors into the lounges
+  [-23.25, -15.5, 15.5, 23.25].forEach(x => box(0.45, 12.7 - YT, 0.45, mat.white, x, (YT + 12.7) / 2, Z3, G));
+  BLOCKS.slice(1).forEach(([a, b]) => {   // only behind the red blocks, so every aisle runs straight onto the terrace
+    glass(b - a, 1.0, 0.04, (a + b) / 2, YT + 0.55, ZT + 0.15);
+    box(b - a, 0.06, 0.08, steelLt, (a + b) / 2, YT + 1.08, ZT + 0.15, G);
+    const n = Math.max(1, Math.round((b - a) / 1.5));
+    for (let i = 0; i <= n; i++) box(0.05, 1.1, 0.05, steelLt, a + i * (b - a) / n, YT + 0.55, ZT + 0.15, G);
+  });
+  [-22.5, -18, -13, 13, 18, 22.5].forEach(x => box(1.8, 2.5, 0.05, winMat, x, YT + 1.25, ZB - 0.03, G));
+  box(2 * SX0, 0.3, ZB - ZT + 0.2, mat.white, 0, 12.85, (ZT + ZB) / 2 - 0.1, G);   // floor of the upper level, open over the stairwells
+  for (let x = -22.5; x <= 22.6; x += 3) { const l = new THREE.Mesh(new THREE.CircleGeometry(0.18, 12), lightMat); l.rotation.x = Math.PI / 2; l.position.set(x, 12.69, (ZT + ZB) / 2); G.add(l); }
+  // VVIP lounge: fully glazed, curtained back wall with the coat of arms, glass canopy over the front
+  const LH = 12.7 - YT;   // lounge height, terrace floor to the slab above
+  glass(10.4, LH, 0.06, 0, YT + LH / 2, ZT + 0.1, M('loungeGlass', 0x9fb4bc, { transparent: true, opacity: 0.35, roughness: 0.05, metalness: 0.2, depthWrite: false }));
+  for (let x = -5.2; x <= 5.21; x += 2.08) box(0.06, LH, 0.08, steelLt, x, YT + LH / 2, ZT + 0.1, G);
+  box(10.4, LH, 0.04, curtain, 0, YT + LH / 2, ZB - 0.06, G);
+  box(0.9, 1.0, 0.05, gold, 0, YT + 2.4, ZB - 0.1, G);
+  [-5.35, 5.35].forEach(x => box(0.3, LH, ZB - ZT, mat.white, x, YT + LH / 2, (ZT + ZB) / 2, G));
+  { const c = glass(11, 0.06, 2.6, 0, 13.2, ZT - 1.1); c.rotation.x = 0.12; }
+  [-4.9, -1.6, 1.6, 4.9].forEach(x => bar(x, 13.05, ZT - 2.3, 13.0, ZT + 0.1, 0.07, steelLt));
+
+  // upper level: white band of glazed suites and open boxes, small square windows between
+  const LEVEL3 = [['w', 1.2], ['g', 6], ['s', 2.6], ['g', 3.4], ['w', 0.6], ['o', 3.6], ['c', SX1 - SX0]];
+  const YS = 13.0;
+  const panel = (x0, x1, t) => {
+    const w = x1 - x0, xc = (x0 + x1) / 2;
+    if (t === 'c') return;   // stairwell: open
+    if (t === 'w' || t === 's') {
+      box(w, 5.6, 0.4, mat.white, xc, YS + 2.8, Z3, G);
+      if (t === 's') [-0.6, 0.6].forEach(d => win(xc + d, Z3 - 0.22, YS + 2.9, 0.7));
+      return;
+    }
+    box(w, 1.3, 0.4, mat.white, xc, YS + 0.65, Z3, G); box(w, 1.7, 0.4, mat.white, xc, YS + 4.75, Z3, G);
+    if (t === 'g') { box(w, 2.6, 0.06, winMat, xc, YS + 2.6, Z3, G); return; }
+    [x0 + 0.12, x1 - 0.12].forEach(x => box(0.25, 2.6, ZB - Z3, mat.white, x, YS + 2.6, (Z3 + ZB) / 2, G));
+    for (let x = x0 + 1; x < x1 - 0.5; x += 2.2) box(0.9, 0.05, 0.15, lightMat, x, YS + 3.87, (Z3 + ZB) / 2, G);
+  };
+  panel(-7, 7, 'o');
+  [1, -1].forEach(sg => { let x = 7; LEVEL3.forEach(([t, w]) => { panel(sg > 0 ? x : -x - w, sg > 0 ? x + w : -x, t); x += w; }); });
+  box(62, 0.3, ZB - ZT + 0.2, mat.white, 0, 18.45, (ZT + ZB) / 2 - 0.1, G);
+  for (let x = -28.2; x <= 28.3; x += 4.7) box(0.55, 0.85, 0.45, speakerMat, x, 19.05, Z3, G);   // PA speakers under the roof
+  const steelDk = M('stairSteel', 0x3f454b, { metalness: 0.4, roughness: 0.5 });
+  const SZ0 = ZT + 1.2, LW = 1.1, laneF = SZ0 + LW / 2, laneB = ZB - LW / 2;   // stair lanes behind a walkway strip
+  const flightX = (z, y0, x0, y1, x1, n) => {   // concrete flight running along the stand
+    const run = (x1 - x0) / n, rise = (y1 - y0) / n;
+    for (let i = 0; i < n; i++) box(Math.abs(run) + 0.02, 0.22, LW, mat.concrete, x0 + (i + 0.5) * run, y0 + (i + 1) * rise - 0.11, z, G);
+    const sl = box(Math.hypot(x1 - x0, y1 - y0), 0.16, LW, mat.white, (x0 + x1) / 2, (y0 + y1) / 2 - 0.15, z, G); sl.rotation.z = Math.atan2(y1 - y0, x1 - x0);   // soffit
+    [z - LW / 2 + 0.05, z + LW / 2 - 0.05].forEach(zz => { const r = box(Math.hypot(x1 - x0, y1 - y0), 0.05, 0.05, steelDk, (x0 + x1) / 2, (y0 + y1) / 2 + 1.0, zz, G); r.rotation.z = Math.atan2(y1 - y0, x1 - x0); r.castShadow = false; });
+  };
+  [1, -1].forEach(sg => {
+    // solid white block at the very end, full height from the terrace, set back to leave a walkway strip for the end aisle
+    box(31 - SX1, 18.6 - YT, ZB - SZ0, mat.white, sg * (SX1 + 31) / 2, (YT + 18.6) / 2, (SZ0 + ZB) / 2, G);
+    // switchback: out towards the end along the front lane, back along the rear lane, twice
+    const xi = sg * (SX0 + 0.7), xo = sg * (SX1 - 0.7), L = [YT, (YT + 13) / 2, 13, 14.9, 16.8];
+    [0, 2].forEach(k => {
+      flightX(laneF, L[k], xi, L[k + 1], xo, 10);
+      flightX(laneB, L[k + 1], xo, L[k + 2], xi, 10);
+      box(0.7, 0.2, ZB - SZ0, mat.concrete, sg * (SX1 - 0.35), L[k + 1] - 0.1, (SZ0 + ZB) / 2, G);   // half landing
+      box(0.7, 0.2, ZB - SZ0, mat.concrete, sg * (SX0 + 0.35), L[k + 2] - 0.1, (SZ0 + ZB) / 2, G);   // floor landing
+      for (let x = SX0 + 0.7; x <= SX1 - 0.7; x += 1.1) box(0.05, 1.0, 0.05, steelDk, sg * x, L[k + 1] + 0.5, SZ0 + LW + 0.1, G);
+    });
+  });
+
+  // end walls following the rake
+  [1, -1].forEach(sg => {
+    const slope = (YT + 1.1 - Y0 - 1.2) / (ZT - 54.6);
+    const prof = [[54.6, 0], [54.6, Y0], [57.8, Y0], [57.8, Y0 + 1.2 + 3.2 * slope], [ZT, YT + 1.1], [ZT + 0.2, 18.6], [ZB, 18.6], [ZB, 0]];
+    const g = new THREE.ExtrudeGeometry(new THREE.Shape(prof.map(([z, y]) => new THREE.Vector2(z, y))), { depth: 0.6, bevelEnabled: false });
+    g.rotateY(-Math.PI / 2);
+    const m = new THREE.Mesh(g, mat.white); m.position.x = sg > 0 ? 31.6 : -31; m.castShadow = m.receiveShadow = true; G.add(m);
+    // outside stair: solid concrete flight from the ground at the back up to a landing level with the deck
+    const xs = sg * 32.4, n = 15, zTop = 57.8, zBot = zTop + n * 0.3, run = (zBot - zTop) / n;   // 15 steps (seating plan), 30 cm treads
+    for (let i = 0; i < n; i++) { const top = (n - i) * Y0 / n; box(1.6, top, run, pink, xs, top / 2, zTop + (i + 0.5) * run, G); }
+    box(1.6, Y0, 3.2, pink, xs, Y0 / 2, 56.2, G);   // landing
+    const xr = xs + sg * 0.75;
+    [1.0, 0.55].forEach(hh => bar(xr, hh, zBot, Y0 + hh, zTop, 0.06, mat.white));
+    box(0.06, 0.06, 3.2, mat.white, xr, Y0 + 1.0, 56.2, G); box(1.6, 0.06, 0.06, mat.white, xs, Y0 + 1.0, 54.65, G);
+    for (let z = 56; z <= zBot; z += 1.7) box(0.07, 1.0, 0.07, mat.white, xr, (z < zTop ? Y0 : (zBot - z) / (zBot - zTop) * Y0) + 0.5, z, G);
+  });
+
+  // cantilevered roof, single slope rising towards the pitch: deck, steel rafters, purlins, cross bracing, fascia
+  const TH = Math.atan2(4.5, 31), RL = 35.5, RC = RL / 2 - 15.7, R = new THREE.Group(); cutaway.push(R);
+  R.position.set(0, 22.75 - RC * Math.sin(TH), 66 + RC * Math.cos(TH)); R.rotation.x = TH; G.add(R);
+  box(66, 0.35, RL, roofMat, 0, 0, 0, R);
+  box(66, 0.9, 0.35, roofMat, 0, -0.25, -RL / 2, R);
+  for (let x = -30; x <= 30; x += 6) box(0.35, 1.3, RL, beamMat, x, -0.85, 0, R);
+  for (let z = 1.4 - RL / 2; z <= RL / 2 - 1.3; z += 2.6) box(66, 0.22, 0.18, beamMat, 0, -0.3, z, R).castShadow = false;
+  for (let x = -30; x < 30; x += 6) for (let z = 0.15 - RL / 2; z <= RL / 2 - 7.8; z += 7.8) [1, -1].forEach(d => {
+    const b = box(0.08, 0.08, Math.hypot(6, 7.8), beamMat, x + 3, -0.45, z + 3.9, R); b.rotation.y = d * Math.atan2(6, 7.8); b.castShadow = false;
+  });
+  [-24, -8, 8, 24].forEach(x => box(0.9, 0.5, 0.6, mat.steel, x, -1.1, 3.2 - RL / 2, R));   // floodlights
+  const roofUnder = z => 22.75 + (66 - z) * Math.tan(TH) - 1.5 / Math.cos(TH);
+  for (let x = -30; x <= 30; x += 6) [Z3, 80].forEach(z => { const h = roofUnder(z) - 18.6; box(0.4, h, 0.4, beamMat, x, 18.6 + h / 2, z, SH); });
+
+  // barred fence across the passage between the grandstand and each curved stand, double gate in the middle left open
+  const barMat = M('bars', 0xffffff, { map: canvasTex(64, 64, (x) => {
+    x.fillStyle = '#3d4247'; x.fillRect(0, 0, 64, 5); x.fillRect(0, 59, 64, 5); x.fillRect(0, 30, 64, 4);
+    for (let i = 2; i < 64; i += 10) x.fillRect(i, 0, 4, 64);
+  }), alphaTest: 0.5, side: DS, metalness: 0.4, roughness: 0.5 });
+  const barPanel = (w, x, parent, ry = 0) => {
+    const g = new THREE.PlaneGeometry(w, 2.4), uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * w / 0.8);
+    const m = new THREE.Mesh(g, barMat); m.position.set(x, 1.3, 0); m.rotation.y = ry; m.castShadow = true; parent.add(m); return m;
+  };
+  [1, -1].forEach(sg => {
+    const F = new THREE.Group(); F.position.z = R0; G.add(F);   // in line with the front of the stands
+    const X = v => sg * v, hinges = [35.7, 39.3];
+    barPanel(2.3, X(34.55), F); barPanel(2.3, X(40.45), F);    // fixed panels either side
+    [33.4, ...hinges, 41.6].forEach(v => box(0.2, 2.7, 0.2, postMat, X(v), 1.35, 0, F));
+    hinges.forEach((h, i) => {
+      const d = (i ? -1 : 1) * sg, P = new THREE.Group();   // d: direction the leaf runs from its hinge
+      P.position.x = X(h); P.rotation.y = -d * 1.35; F.add(P);   // swung back into the passage
+      barPanel(1.8, d * 0.9, P);
+      box(0.08, 2.4, 0.08, postMat, d * 1.78, 1.3, 0, P);
+    });
+  });
+
+  // ---- back of the grandstand (site photos). The rear is at site level, D above the pitch. A service corridor runs the full
+  // length at pitch level, under the building and an open lightwell, reached by vehicle ramps at both ends. Above it is the
+  // entrance level: lobby with two lifts in the middle, a turnstile entrance either side, bridges over the lightwell, murals;
+  // then a colonnade on raked concrete columns carrying the upper floors, wrapped in a curved screen of horizontal louvres.
+  const GL = D + 0.3, SOF = 7.8, ZC0 = 75.5, ZW = 77.5, ZU = 84, ZK = 86.3;   // entrance floor, soffit, rooms face, entrance face, upper wall, kerb
+  const ENTR = [[-6.2, 6.2], [-21.7, -15.5], [15.5, 21.7]];   // lobby, turnstile entrances
+  const greyBlue = M('greyBlue', 0x9ea8ae), darkBand = M('darkBand', 0x4b5056), tileMat = M('tiles', 0x8e9499), concRough = M('rawConcrete', 0x9a9d9f);
+  const texMat = (w, h, draw, rx = 1, o = {}) => { const m = M('tex', 0xffffff, { map: canvasTex(w, h, draw, rx !== 1), ...o }); m.map.repeat.set(rx, 1); return m; };
+  const plane = (w, h, m, x, y, z, ry = 0, parent = SH) => { const p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); p.position.set(x, y, z); p.rotation.y = ry; parent.add(p); return p; };
+  const spans = (a, b, gaps) => { const out = []; let x = a; [...gaps].sort((p, q) => p[0] - q[0]).forEach(([g0, g1]) => { if (g0 > x) out.push([x, g0]); x = Math.max(x, g1); }); if (b > x) out.push([x, b]); return out; };
+  const xs = Array.from({ length: 11 }, (_, i) => -31 + i * 6.2);   // structural grid
+
+  // pitch-level rooms behind the corridor, and the corridor itself
+  box(63.2, GL, ZC0 - ZB, mat.white, 0, GL / 2, (ZB + ZC0) / 2, G);
+  box(63.2, 1.3, 0.05, darkBand, 0, 0.65, ZC0 + 0.03, G);
+  box(63.2, 0.25, 1.4, mat.concrete, 0, 0.125, ZC0 + 0.7, G);   // raised footpath along the rooms
+  const ventMat = texMat(32, 32, x => { x.fillStyle = '#f1f0ec'; x.fillRect(0, 0, 32, 32); x.fillStyle = '#bdb9b0'; for (let i = 0; i < 32; i += 8) { x.fillRect(i, 0, 2, 32); x.fillRect(0, i, 32, 2); } });
+  [-27, -14, -2, 9, 21].forEach(x => box(1.1, 2.2, 0.06, doorMat, x, 1.35, ZC0 + 0.04, G));
+  [-21, -8, 4, 15, 27].forEach(x => box(1.3, 1.3, 0.06, ventMat, x, 2.5, ZC0 + 0.04, G));
+  box(63.2, 0.04, ZR - ZC0, mat.asphalt, 0, 0.02, (ZC0 + ZR) / 2, G);
+  // retaining wall along the back of the corridor, parapet above site level except at the bridges
+  box(63.2, GL, 0.4, greyBlue, 0, GL / 2, ZR + 0.2, G);
+  box(63.2, 1.6, 0.04, darkBand, 0, 0.8, ZR - 0.02, G);
+  spans(-31.6, 31.6, ENTR).forEach(([a, b]) => box(b - a, 1.1, 0.4, greyBlue, (a + b) / 2, GL + 0.55, ZR + 0.2, G));
+  xs.forEach(x => box(0.6, D, 0.45, greyBlue, x, D / 2, ZR - 0.22, G));
+  [[-25.6, 0x2f64b4], [-24.9, 0x2a2d31], [-24.2, 0x9c2f2f], [-23.5, 0x2f64b4], [17.4, 0x2a2d31], [18.1, 0x2f64b4]].forEach(([x, c]) => {   // wheelie bins
+    const m = M('bin', c); box(0.6, 1.0, 0.7, m, x, 0.5, ZR - 0.85, G); box(0.66, 0.06, 0.76, m, x, 1.03, ZR - 0.85, G);
+  });
+  box(63.2, 0.3, ZW - ZC0, mat.white, 0, D + 0.15, (ZC0 + ZW) / 2, SH);   // entrance-level floor over the corridor
+  for (let x = -27; x <= 27; x += 6) box(1.4, 0.06, 0.15, lightMat, x, D - 0.03, (ZC0 + ZW) / 2, SH);   // strip lights
+  ENTR.forEach(([a, b]) => box(b - a, 0.3, ZR + 0.4 - ZW, tileMat, (a + b) / 2, D + 0.15, (ZW + ZR + 0.4) / 2, SH));   // bridges
+
+  // entrance level: enclosure with the lobby and turnstile openings cut into it
+  [[-31.6, -21.7, ZW], [-21.7, -15.5, 75], [-15.5, -6.2, ZW], [-6.2, 6.2, 72], [6.2, 15.5, ZW], [15.5, 21.7, 75], [21.7, 31.6, ZW]]
+    .forEach(([a, b, zb]) => box(b - a, SOF - GL, zb - ZB, mat.white, (a + b) / 2, (GL + SOF) / 2, (ZB + zb) / 2, SH));
+  box(12.4, 0.02, 75.5 - 72, tileMat, 0, GL + 0.01, 73.75, G);
+  ENTR.forEach(([a, b]) => [a + 0.15, b - 0.15].forEach(x => box(0.3, 1.1, ZR + 0.4 - ZW, greyBlue, x, GL + 0.55, (ZW + ZR + 0.4) / 2, G)));   // low walls along the bridges
+  [-1, 1].forEach(sg => box(0.3, 1.1, ZR - ZW, greyBlue, sg * 31.45, GL + 0.55, (ZW + ZR) / 2, G));   // across the lightwell ends
+  // lobby: fluted wall with two lifts, wood-plank ceiling with round lights
+  const fluted = texMat(64, 16, x => { x.fillStyle = '#4a4e53'; x.fillRect(0, 0, 64, 16); x.fillStyle = '#5f6469'; for (let i = 0; i < 64; i += 8) x.fillRect(i, 0, 3, 16); }, 12.4 / 0.6);
+  box(12.4, SOF - GL, 0.3, fluted, 0, (GL + SOF) / 2, 71.85, G);
+  const liftMat = M('lift', 0xd2d6d9, { metalness: 0.6, roughness: 0.3 });
+  [-1.6, 1.6].forEach(x => box(1.3, 2.3, 0.06, liftMat, x, GL + 1.15, 72.03, G));
+  const wood = rx => texMat(64, 16, x => { x.fillStyle = '#5b4030'; x.fillRect(0, 0, 64, 16); x.fillStyle = '#3e2b20'; for (let i = 0; i < 64; i += 16) x.fillRect(i, 0, 2, 16); x.fillStyle = '#6b4d3a'; x.fillRect(7, 0, 1, 16); }, rx);
+  [[-6.2, 6.2, 72], [-21.7, -15.5, 75], [15.5, 21.7, 75]].forEach(([a, b, z0]) => {
+    box(b - a, 0.1, ZR + 0.4 - z0, wood((b - a) / 1.2), (a + b) / 2, SOF - 0.36, (z0 + ZR + 0.4) / 2, SH);
+    for (let x = a + 1.8; x < b - 1; x += 3) for (let z = z0 + 1.5; z < ZR; z += 3) { const l = new THREE.Mesh(new THREE.CircleGeometry(0.22, 14), lightMat); l.rotation.x = Math.PI / 2; l.position.set(x, SOF - 0.42, z); SH.add(l); }
+  });
+  // turnstiles behind a bar grille
+  const turnMat = texMat(32, 32, x => { x.fillStyle = '#c3c8cc'; x.fillRect(0, 0, 32, 32); x.fillStyle = '#7d8388'; for (let i = 2; i < 32; i += 5) x.fillRect(0, i, 32, 2); x.fillRect(0, 0, 3, 32); x.fillRect(29, 0, 3, 32); });
+  ENTR.slice(1).forEach(([a, b]) => { plane(b - a, 2.7, barMat, (a + b) / 2, GL + 1.35, 75.15, 0, G); box(1.3, 2.4, 1.3, turnMat, (a + b) / 2, GL + 1.2, 75.95, G); });
+  // murals on the entrance-level face, seen across the lightwell
+  const mural = draw => texMat(256, 72, draw, 1, { roughness: 0.9 });
+  const disc = (x, cx, cy, r, c) => { x.fillStyle = c; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); };
+  [[-26.65, mural(x => {   // woman drinking from a bowl, sun and palms
+    const g = x.createLinearGradient(0, 0, 256, 0); g.addColorStop(0, '#e2462f'); g.addColorStop(0.55, '#f2a531'); g.addColorStop(1, '#f6d548'); x.fillStyle = g; x.fillRect(0, 0, 256, 72);
+    disc(x, 206, 20, 15, '#fbe9a0'); x.fillStyle = '#2c6fb8'; x.fillRect(0, 58, 256, 14);
+    disc(x, 118, 24, 8, '#5a3424'); x.fillRect(110, 32, 18, 30); x.fillStyle = '#e8e2d0'; x.fillRect(130, 26, 22, 7);
+    x.fillStyle = '#2d5a2a'; [26, 46, 64].forEach(p => { x.fillRect(p, 28, 3, 32); x.beginPath(); x.ellipse(p + 1, 27, 11, 4, 0, 0, 7); x.fill(); });
+  })], [-10.85, mural(x => {   // yellow, with Adinkra symbols
+    x.fillStyle = '#f3c623'; x.fillRect(0, 0, 256, 72); disc(x, 70, 40, 26, '#e0532f'); disc(x, 70, 24, 6, '#3b2a20'); x.fillStyle = '#3b2a20'; x.fillRect(65, 30, 10, 26);
+    x.strokeStyle = '#111'; x.lineWidth = 4; [[150, 24], [196, 40], [160, 54], [222, 20]].forEach(([cx, cy]) => { x.beginPath(); x.ellipse(cx, cy, 13, 8, 0, 0, 7); x.stroke(); disc(x, cx, cy, 3, '#111'); });
+  })], [10.85, mural(x => {   // blue, hands around Africa
+    x.fillStyle = '#2f64b4'; x.fillRect(0, 0, 256, 72); x.strokeStyle = '#6f9ad6'; x.lineWidth = 3;
+    for (let i = 0; i < 9; i++) { x.beginPath(); x.arc(30 + i * 26, 36, 22, 0.4, 2.6); x.stroke(); }
+    disc(x, 128, 36, 20, '#e8f0f8'); x.fillStyle = '#e07b2c'; x.beginPath(); x.ellipse(127, 33, 7, 11, 0.3, 0, 7); x.fill(); x.fillStyle = '#3c8a3c'; x.fillRect(122, 40, 7, 6);
+    x.fillStyle = '#f0e6d8'; [[100, 20], [156, 20], [98, 52], [158, 52]].forEach(([cx, cy]) => { x.beginPath(); x.ellipse(cx, cy, 9, 5, cx < 128 ? 0.6 : -0.6, 0, 7); x.fill(); });
+  })], [26.65, mural(x => {   // three laughing women on colour blocks
+    [['#2fa84f', 0], ['#f3c623', 64], ['#e5432f', 128], ['#2f64b4', 192]].forEach(([c, x0]) => { x.fillStyle = c; x.fillRect(x0, 0, 64, 72); });
+    [[96, 40], [128, 34], [160, 40]].forEach(([cx, cy]) => { disc(x, cx, cy, 15, '#2b1c16'); disc(x, cx, cy + 4, 11, '#6b3f2a'); x.fillStyle = '#7a3fa0'; x.fillRect(cx - 12, cy - 18, 24, 7); });
+  })]].forEach(([x, m]) => plane(7.5, 2.1, m, x, GL + 2.25, ZW + 0.02));
+
+  // upper floors over the lightwell and colonnade
+  box(63.2, 18.6 - SOF, ZU - ZB, mat.white, 0, (SOF + 18.6) / 2, (ZB + ZU) / 2, SH);
+  box(63.2, 0.3, 86 - ZW, mat.white, 0, SOF - 0.15, (ZW + 86) / 2, SH);   // soffit
+  plane(62, 18.6 - SOF, texMat(128, 220, x => {   // rear wall behind the louvres: round panels, windows, AC units
+    x.fillStyle = '#ecebe6'; x.fillRect(0, 0, 128, 220); disc(x, 64, 96, 54, '#f7f6f2'); x.strokeStyle = '#d6d4cd'; x.lineWidth = 3; x.beginPath(); x.arc(64, 96, 54, 0, 7); x.stroke();
+    x.fillStyle = '#56636c'; [[14, 30], [80, 30], [14, 164], [80, 164]].forEach(([a, b]) => x.fillRect(a, b, 34, 26));
+    x.fillStyle = '#fdfdfb'; x.fillRect(46, 64, 36, 22); x.fillStyle = '#9aa0a4'; for (let i = 0; i < 5; i++) x.fillRect(50 + i * 6, 68, 3, 14);
+  }, 10), 0, (SOF + 18.6) / 2, ZU + 0.01);
+  for (let x = -29.5; x <= 29.6; x += 3.1) { const l = new THREE.Mesh(new THREE.CircleGeometry(0.2, 14), lightMat); l.rotation.x = Math.PI / 2; l.position.set(x, SOF - 0.31, 83.6); SH.add(l); }
+  // raked concrete columns at the front, leaning out from the middle one; square columns behind
+  xs.slice(1, -1).forEach(x => {
+    const dx = Math.sign(x) * 1.0, h = SOF - 0.3 - GL, c = box(0.7, Math.hypot(dx, h), 0.85, concRough, x - dx / 2, GL + h / 2, 85.6, SH);
+    c.rotation.z = -Math.atan2(dx, h);
+  });
+  xs.forEach(x => box(0.6, SOF - 0.3 - GL, 0.6, greyBlue, x, (GL + SOF - 0.3) / 2, 81.8, SH));
+  // curved louvre screen: horizontal slats on bronze ribs, broad bands at the ends running down to the ground
+  const L0 = new THREE.Vector2(85.9, SOF - 0.1), L1 = new THREE.Vector2(89.9, 9.6), L2 = new THREE.Vector2(89.7, 16.4), L3 = new THREE.Vector2(84.3, roofUnder(84.3) - 0.15);
+  const scr = new THREE.CubicBezierCurve(L0, L1, L2, L3), louvreMat = M('louvre', 0xe8e9e8, { roughness: 0.6 }), ribMat = M('ribs', 0x8c7f6c, { roughness: 0.6, metalness: 0.3 });
+  for (let i = 0; i < 23; i++) { const q = scr.getPoint(0.02 + i * 0.96 / 22); box(62.6, 0.1, 0.45, louvreMat, 0, q.y, q.x, SH).castShadow = false; }
+  const ribCurve = (x, extra = []) => new THREE.CatmullRomCurve3([...extra, ...scr.getPoints(16).map(q => new THREE.Vector3(x, q.y, q.x - 0.3))]);
+  xs.slice(1, -1).forEach(x => SH.add(new THREE.Mesh(new THREE.TubeGeometry(ribCurve(x), 32, 0.16, 6), ribMat)));
+  [-31.35, 31.35].forEach(x => {
+    const band = new THREE.Mesh(new THREE.TubeGeometry(ribCurve(x, [new THREE.Vector3(x, GL, 86.6)]), 40, 0.75, 8), ribMat);
+    band.scale.x = 0.4; band.position.x = x * 0.6; band.castShadow = true; SH.add(band);
+  });
+  // UNIVERSITY OF GHANA STADIUM sign on the screen over the main entrance
+  { const q = scr.getPoint(0.27);
+    box(9.4, 2.0, 0.2, M('signBack', 0x213f8f), 0, q.y, q.x + 0.35, SH);
+    plane(9.2, 1.9, texMat(512, 112, x => {
+      x.fillStyle = '#213f8f'; x.fillRect(0, 0, 512, 112); x.fillStyle = '#fff'; x.fillRect(10, 10, 92, 92);
+      x.fillStyle = '#213f8f'; x.beginPath(); x.moveTo(24, 22); x.lineTo(88, 22); x.lineTo(88, 62); x.quadraticCurveTo(88, 92, 56, 98); x.quadraticCurveTo(24, 92, 24, 62); x.closePath(); x.fill();
+      x.fillStyle = '#e1b84a'; [36, 53, 70].forEach(a => x.fillRect(a, 30, 6, 22)); x.strokeStyle = '#e1b84a'; x.lineWidth = 4; x.beginPath(); x.arc(56, 74, 10, 0, 7); x.stroke();
+      x.fillStyle = '#fff'; x.textAlign = 'center'; x.font = 'bold 30px Arial, sans-serif'; x.fillText('UNIVERSITY OF GHANA', 305, 44); x.font = 'bold 56px Arial, sans-serif'; x.fillText('STADIUM', 305, 98);
+    }), 0, q.y, q.x + 0.46); }
+
+  // end towers: grey window strips, dark band at the top, athlete silhouettes (high jump at the north end, javelin at the south)
+  const silhouette = draw => texMat(256, 160, x => { x.strokeStyle = x.fillStyle = '#25282c'; x.lineCap = x.lineJoin = 'round'; draw(x); }, 1, { transparent: true, alphaTest: 0.5 });
+  const line = (x, w, pts) => { x.lineWidth = w; x.beginPath(); pts.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); x.stroke(); };
+  const SIL = {
+    '-1': silhouette(x => {
+      line(x, 5, [[26, 150], [26, 18]]); line(x, 5, [[230, 150], [230, 18]]); line(x, 5, [[26, 40], [230, 40]]);
+      x.lineWidth = 20; x.beginPath(); x.moveTo(80, 72); x.quadraticCurveTo(128, 22, 176, 48); x.stroke();
+      line(x, 13, [[176, 48], [196, 82], [182, 106]]); line(x, 13, [[176, 48], [208, 72], [200, 98]]); line(x, 12, [[86, 66], [72, 98]]); line(x, 12, [[92, 62], [88, 94]]);
+      x.beginPath(); x.arc(70, 80, 12, 0, 7); x.fill();
+    }),
+    '1': silhouette(x => {
+      line(x, 4, [[20, 128], [240, 18]]);
+      line(x, 18, [[140, 94], [118, 50]]); line(x, 12, [[140, 94], [176, 122], [200, 152]]); line(x, 12, [[140, 94], [110, 126], [70, 138]]);
+      line(x, 11, [[120, 54], [92, 66], [72, 86]]); line(x, 11, [[118, 52], [150, 42], [176, 48]]);
+      x.beginPath(); x.arc(112, 32, 12, 0, 7); x.fill();
+    })
+  };
+  const stripMat = M('winStrip', 0x6e757b);
+  [-1, 1].forEach(sg => {
+    const xf = sg * 31.63, ry = sg * Math.PI / 2;
+    plane(ZU - ZB, 0.9, darkBand, xf, 18.15, (ZB + ZU) / 2, ry);
+    [[72.6, 13.0, 9.2, [9.6, 12.7, 15.8]], [76.6, 14.7, 5.8, [13.3, 16.2]]].forEach(([z, y, h, wins]) => {
+      plane(1.3, h, stripMat, xf, y, z, ry);
+      wins.forEach(wy => plane(0.8, 1.6, winMat, xf + sg * 0.02, wy, z, ry));
+    });
+    plane(5.2, 3.25, SIL[sg], xf + sg * 0.02, 14.2, 80.6, ry);
+  });
+
+  // colonnade at site level: tiled floor, planting beds between the raked columns, kerb, plaque and signs
+  box(63.2, 0.3, ZK - (ZR + 0.4), tileMat, 0, D + 0.15, (ZR + 0.4 + ZK) / 2, G);
+  box(63.2, 0.32, 0.25, mat.concrete, 0, D + 0.16, ZK + 0.12, G);
+  box(63.2, 0.02, 87.6 - ZK - 0.25, mat.asphalt, 0, D + 0.085, (ZK + 0.25 + 87.6) / 2, G);
+  const shrubs = [], spiky = [];
+  spans(-31, 31, ENTR.map(([a, b]) => [a - 0.4, b + 0.4])).forEach(([a, b]) => {
+    box(b - a, 0.06, 2.4, M('soil', 0x4a3a2c), (a + b) / 2, GL + 0.03, 84.8, G);
+    box(b - a - 0.3, 0.12, 0.9, M('groundCover', 0x5a3d6e), (a + b) / 2, GL + 0.08, 85.5, G);
+    for (let x = a + 0.8; x < b - 0.5; x += 1.7) (Math.abs(x * 7) % 3 < 1.4 ? spiky : shrubs).push([x, 84.4 + (Math.abs(x * 13) % 1) * 0.6]);
+  });
+  [[shrubs, new THREE.IcosahedronGeometry(0.55, 0), M('shrub', 0x3f6b35, { flatShading: true })], [spiky, new THREE.ConeGeometry(0.45, 0.8, 7), M('spiky', 0x93b04c, { flatShading: true })]]
+    .forEach(([pts, geo, m]) => {
+      const im = new THREE.InstancedMesh(geo, m, pts.length), o = new THREE.Object3D();
+      pts.forEach(([x, z], i) => { o.position.set(x, GL + 0.45, z); o.rotation.y = x; o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
+      im.castShadow = true; G.add(im);
+    });
+  box(0.9, 1.6, 0.5, M('stone', 0x8a8d8f), -7.4, GL + 0.8, 85.2, G); box(0.6, 0.4, 0.04, M('plaque', 0xcfd2d4), -7.4, GL + 1.3, 85.47, G);
+  box(0.8, 1.1, 0.35, M('consar', 0x2fa84f), 8.0, GL + 0.55, 85.4, G);
+
+  // at each end the corridor opens at pitch level, through a bar gate, onto a junction with the road round the stands
+  const RL0 = 87.2, tE = Math.acos((62 - A) / RR);   // junction runs back to the boundary wall
+  [-1, 1].forEach(sg => {
+    const pad = [[31.6, RF], [A, RF]];
+    for (let t = Math.PI / 2 - 0.03; t > tE; t -= 0.03) pad.push([A + RF * Math.cos(t), RF * Math.sin(t)]);
+    pad.push([A + RF * Math.cos(tE), RF * Math.sin(tE)], [A + (RR + 3.5) * Math.cos(tE), (RR + 3.5) * Math.sin(tE)], [A + (RR + 3.5) * Math.cos(tE), RL0], [31.6, RL0]);
+    flat(new THREE.Shape(pad.map(([x, z]) => new THREE.Vector2(sg * x, -z))), mat.asphalt, 0.1, G);
+    const Gt = new THREE.Group(); Gt.position.set(sg * 31.6, 0.03, (ZC0 + ZR) / 2); Gt.rotation.y = Math.PI / 2; G.add(Gt);
+    [-1.38, 1.38].forEach(d => barPanel(2.7, d, Gt));
+    [-2.75, 0, 2.75].forEach(d => box(0.2, 2.7, 0.2, postMat, d, 1.35, 0, Gt));
+  });
+
+  // pitch side: slotted drain along the track, paths to the rooms, team dugouts
+  [[-44, -15.2], [-8.8, 8.8], [15.2, 44]].forEach(([a, b]) => roadSeg(a, 50.55, b, 50.55, 0.7, drainMat, 0.105, 2, G));   // broken for the dugouts
+  [-17, 1, 19].forEach(x => roadSeg(x, 50.9, x, 55, 1.8, mat.concrete, 0.1, 10, G));
+  [-12, 12].forEach(x => {
+    box(6, 0.1, 2.8, mat.concrete, x, 0.12, 51.4, G);   // at the edge of the track
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 6, 18, 1, true, 0, Math.PI * 0.72), glassC);
+    shell.rotation.z = Math.PI / 2; shell.position.set(x, 0.15, 51.4); G.add(shell);
+    box(5.6, 0.45, 0.5, mat.seatBlue, x, 0.4, 52.1, G);
+  });
 }
 // floodlight masts
 {
   const darkMat = M('opening', 0x2a2e33);
-  const seatH = (r, rows, h1) => { const k = Math.max(0, Math.floor((r - R0) / ((R1 - R0) / rows))); return 1.3 + k * (h1 - 1.3) / rows; };
   const place = (u, r, y, w, h, d, m) => {
     const [x, z] = pp(u, r, A), [x2, z2] = pp(u + 0.002, r, A);
     const o = box(w, h, d, m, x, y, z, S); o.rotation.y = Math.atan2(-(z2 - z), x2 - x); return o;
   };
-  const path = (u, r0, r1, w = 3) => { const [a0, b0] = pp(u, r0, A), [a1, b1] = pp(u, r1, A); roadSeg(a0, b0, a1, b1, w, mat.concrete, 0.11, 10, S); };
-  // north stand: two walk-through tunnels onto the pitch
-  [0.035, 0.96].forEach(u => {
-    path(u, 49.5, RR - 3.5, 5);
-    place(u, 74, 12.6, 7, 0.6, 2.2, mat.concrete);             // concourse bridge over the gap
+  const path = (u, r0, r1, w = 3, y = 0.11) => { const [a0, b0] = pp(u, r0, A), [a1, b1] = pp(u, r1, A); roadSeg(a0, b0, a1, b1, w, mat.concrete, y, 10, S); };
+  // gaps either end of the east stand, which is a section of its own (site photos): from the road, two flights climb side
+  // by side, split by a dividing wall with the sector sign, to the level of the colonnades behind the stands. At the top
+  // each turns out onto its stand's colonnade; ahead, a landing at pitch level runs in to a wall across the front of the gap
+  // with a barred gate onto the field. Tiled cheek walls, guarded where they drop beside the flights.
+  const stripeTex = canvasTex(64, 16, x => [['#d3d0c9', 0], ['#b1aea8', 16], ['#d3d0c9', 32], ['#9d9a94', 48]].forEach(([c, x0]) => { x.fillStyle = c; x.fillRect(x0, 0, 16, 16); }));
+  const tiles = rep => { const t = stripeTex.clone(); t.needsUpdate = true; t.repeat.set(rep, rep); return M('tiles', 0xffffff, { map: t, side: DS }); };
+  const steelPipe = M('pipe', 0xa9afb4, { metalness: 0.5, roughness: 0.4 });
+  const GW = (0.995 - 0.925) * 2 * A, yR = LOWR, yF = LOWR + 0.15, n1 = 16, tr = 0.27, rB = RR - 3.65, rT = rB - n1 * tr, hw = GW / 2 - 0.27, rise = (0.05 - yF) / n1;
+  const extr = (prof, x0, depth, m) => {
+    const g = new THREE.ExtrudeGeometry(new THREE.Shape(prof.map(([r, y]) => new THREE.Vector2(r, y))), { depth, bevelEnabled: false }).rotateY(Math.PI / 2);
+    const o = new THREE.Mesh(g, m); o.position.x = x0; o.castShadow = o.receiveShadow = true; S.add(o);
+  };
+  [0.04, 0.96].forEach(ug => {
+    const gx = -A + 2 * A * ug, P = (r, t, y) => { const [x, z] = onRow(ug, r, t); return [x, y, z]; };
+    floorHoles.push([gx - GW / 2, -74.97, gx + GW / 2, -(rT + 0.02)]);
+    for (let i = 0; i < n1; i++) { const top = 0.05 - i * rise; [-1, 1].forEach(s => placeAt(ug, rT + (i + 0.5) * tr, s * (0.15 + hw / 2), (top + yR) / 2, hw - 0.02, top - yR, tr + 0.02, mat.concrete)); }
+    // dividing wall, tall at the road end, stepping down to handrail height at the landing
+    extr([[rT, yR], [rT, 1.1], [rB - 1.3, yF + 2.4], [rB, yF + 2.4], [rB, yR]], gx - 0.15, 0.3, tiles(1 / 2.4));
+    placePlane(ug, rB + 0.02, 0, yF + 1.5, 0.42, 0.74, sectorSign);
+    [-1, 1].forEach(s => {
+      // cheek wall: flush with the colonnade alongside the upper flight, sloping down outside the stand
+      extr([[rT, yR], [rT, 0.06], [RF + 0.35, 0.06], [rB, yF + 0.9], [rB, yR]], gx + s * (GW / 2 - 0.06) - 0.06, 0.12, tiles(1 / 2.4));
+      const tc = s * (GW / 2 - 0.06);
+      bar3(P(rT, tc, 1.06), P(RF + 0.35, tc, 1.06), 0.06, steelPipe);   // guard along the colonnade's end
+      bar3(P(RF + 0.35, tc, 1.06), P(rB, tc, yF + 1.8), 0.06, steelPipe);
+      [rT + 0.1, (rT + RF) / 2, RF + 0.3].forEach(r => placeAt(ug, r, tc, 0.56, 0.06, 1.0, 0.06, steelPipe));
+      [s * (GW / 2 - 0.2), s * 0.3].forEach(t => bar3(P(rB, t, yF + 0.95), P(rT, t, 1.0), 0.05, steelPipe));   // handrails up the flight
+      placeAt(ug, RCB - 1.5, s * (GW / 2 - 0.13), 1.05, 0.04, 2.1, 1.0, doorWhite);   // door into the rooms off the landing
+      placeAt(ug, RF + 0.36, s * (GW / 2 + 1.4), yF + 1.05, 1.0, 2.1, 0.04, doorWhite);   // door in the stand's base, off the road
+    });
+    // front wall with the gate onto the field
+    [[-GW / 2, -1.3], [1.3, GW / 2]].forEach(([a, c]) => {
+      placeAt(ug, R0 - 0.3, (a + c) / 2, 1.2, c - a, 2.4, 0.3, tiles((c - a) / 2.4));
+      placeAt(ug, R0 - 0.3, (a + c) / 2, 2.45, c - a + 0.04, 0.1, 0.4, mat.white);   // coping
+    });
+    const gate = placeAt(ug, R0 - 0.3, 0, 1.15, 2.6, 2.2, 0.02, fenceMat); gate.geometry = new THREE.PlaneGeometry(2.6, 2.2);
+    [-1.3, 1.3].forEach(t => placeAt(ug, R0 - 0.3, t, 1.25, 0.12, 2.5, 0.12, steelPipe));
   });
-  // eight tunnel entrances (vomitories) into the seating: middle and both diagonals of each curve, two on the east stand
-  // each is a portal at the foot of the stand, at pitch level, running back under the lower rows
-  [1.25, 1.5, 1.75, 3.25, 3.5, 3.75, 0.3, 0.7].forEach(u => {
-    place(u, R0 + 2, 1.6, 4.4, 3.2, 4, mat.white);           // portal block
-    place(u, R0 - 0.05, 1.3, 3, 2.6, 0.1, darkMat);          // tunnel mouth facing the pitch
-    place(u, R0 - 0.05, 3.0, 4.4, 0.35, 0.12, mat.seatRed);  // trim
-    path(u, 50, R0, 3);                                       // walkway across the grass to the track
-  });
-  // ground-level gates through the outer wall
-  [1.05, 1.25, 1.5, 1.75, 1.95, 3.05, 3.25, 3.5, 3.75, 3.95].forEach(u => {
-    place(u, RF + 0.15, 1.3, 4.2, 2.6, 0.12, darkMat);
-    path(u, RF + 0.3, RR - 3.5, 4.5);
-  });
+  // bowl floor, open where the gap stairs and the east stand's inner stairs go down
+  { const bf = shapeFrom(stadPts(A, RF)); floorHoles.forEach(([x0, z0, x1, z1]) => bf.holes.push(new THREE.Path(rectPts(x0, z0, x1, z1).map(([x, z]) => new THREE.Vector2(x, -z))))); flat(bf, mat.concrete, 0.05, S); }
 }
 // floodlight masts
 [1.25, 1.75, 3.25, 3.75].forEach(u => {
   const [x, z] = pp(u, RF + 1.4, A);   // tucked against the stands, inside the service road
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.9, 46, 12), mat.steel); pole.position.set(x, 23, z); pole.castShadow = true; S.add(pole);
-  const head = new THREE.Group(); head.position.set(x, 47, z); S.add(head);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.9, 46, 12), mat.steel); pole.position.set(x, ringY(u) + 23, z); pole.castShadow = true; S.add(pole);
+  const head = new THREE.Group(); head.position.set(x, ringY(u) + 47, z); S.add(head);
   box(9, 6, 0.8, mat.steel, 0, 0, 0, head); box(8.4, 5.4, 0.2, mat.white, 0, 0, 0.5, head);
   head.lookAt(0, 0, 0);
 });
@@ -444,7 +1312,7 @@ function row(at, c0, c1, ns = false) {
 // (11 m of bays + 7 m aisle) with a 17 m spine between x 124 and 152 and 8 m cross aisles; each block only holds the
 // rows that clear the slanted east kerb by a full aisle, and a single row of bays lines that kerb.
 const CARPARK = satPoly([[520, 182], [1435, 182], [1478, 212], [1615, 1182], [520, 1192]]);
-flat(shapeFrom(CARPARK), mat.asphalt, 0.05);
+flat(withOct(shapeFrom(CARPARK)), mat.asphalt, 0.05);
 CARPARK.forEach((p, i) => i < CARPARK.length - 1 && roadSeg(...p, ...CARPARK[i + 1], 0.8, mat.concrete, 0.055, 10));   // kerb (west edge below, round the west lot)
 [[-154, -84, [106, 124, 152]],
  [-76, -6, [106, 124, 152, 170]],
@@ -458,19 +1326,36 @@ CARPARK.forEach((p, i) => i < CARPARK.length - 1 && roadSeg(...p, ...CARPARK[i +
   for (let z = -140; z < 128; z += 40) lampPos.push([ex(z) - 0.9, z]);
 }
 row(70, -154, -122, true); row(88, -154, -104, true);   // short rows tucked against the stadium's north-east corner
-// lot west of the grandstand, between the De'lish road and the warm-up track, running straight into the strip behind
-// the grandstand as one paved area; entered off the De'lish road along its top
-const cx = CARPARK[0][0];
-const WEST_LOT = [[-185, -52], [cx, -52], [cx, 72], [-121, 61], [-184.2, 42.4]];
-flat(shapeFrom(WEST_LOT), mat.asphalt, 0.05);
-WEST_LOT.slice(2).forEach((p, i) => roadSeg(...p, ...WEST_LOT[(i + 3) % WEST_LOT.length], 0.8, mat.concrete, 0.055, 10));   // kerb, open to road and car park
-roadSeg(cx, CARPARK[4][1], cx, 72, 0.8, mat.concrete, 0.055, 10); roadSeg(cx, -52, cx, CARPARK[0][1], 0.8, mat.concrete, 0.055, 10);   // rest of the car park's west kerb
-// bays marked with white lines only, back to back either side of a centre line, lamps down the middle
-[[-168, 39], [-148, 45], [-128, 51]].forEach(([x, z1]) => {
-  [-2.75, 2.75].forEach(d => roadSeg(x + d, -44, x + d, z1, 5.5, lineBayMat, 0.058, 10));
-  roadSeg(x, -44, x, z1, 0.15, mat.white, 0.059, 10);
-  for (let z = -36; z < z1; z += 25) lampPos.push([x, z]);
-});
+// grandstand car park (91 bays) west of the yard, behind the EG5 gates; fenced, entered from the end of New University Rd.
+// 2.5 x 5 m bays marked in white: a row along the back, a double row either side of a kerbed island, and a short row on
+// the north side; tree islands and a small roundabout island, as on the as-built layout
+const LOT91 = [[-146.5, -49.2], [-105.8, -49.2], [-105.8, 56.5], [-146.5, 56.5]];
+flat(shapeFrom(LOT91), mat.asphalt, 0.052);
+roadSeg(CARPARK[0][0], 57.3, CARPARK[0][0], CARPARK[4][1], 0.8, mat.concrete, 0.055, 10);
+roadSeg(CARPARK[0][0], -52, CARPARK[0][0], CARPARK[0][1], 0.8, mat.concrete, 0.055, 10);   // rest of the car park's west kerb
+const islandTrees = [];
+roadSeg(-143, 49.4, -143, -22.3, 5, lineBayMat, 0.058, 10);                       // back row
+planter(-127.5, 49, -125.5, -15.7, 1);                                          // centre island
+roadSeg(-130, 48.5, -130, -16.6, 5, lineBayMat, 0.058, 10);
+roadSeg(-123, 48.5, -123, 2.6, 5, lineBayMat, 0.058, 10); roadSeg(-123, -5.6, -123, -16.6, 5, lineBayMat, 0.058, 10);
+planter(-125.5, 2.3, -118.3, -5.3, 3.6); islandTrees.push([-126.5, 10.8, 3.5]);   // bulb off the island
+planter(-145.6, -23.7, -133, -27.5, 1.9); islandTrees.push([-142.5, -25.6, 3.8], [-136, -25.6, 4]);    // tree island off the back kerb
+roadSeg(-143.7, -43.7, -120.6, -43.7, 5, lineBayMat, 0.058, 10);                  // north row
+planter(-119.5, -23.8, -115.1, -28.2, 2.2); islandTrees.push([-117.3, -26, 3.2]); // roundabout island
+[47.4, 27.5, 7.5, -12.3].forEach(z => lampPos.push([-126.5, z]));
+[51.3, 31.3, 11.4, -8.6].forEach(z => lampPos.push([-146, z]));
+lampPos.push([-141.4, -46.6], [-121.1, -46.6]);
+// boundary fence round the lot, open on the north side for the entry/exit
+{
+  const F = [[-104.6, 57.3], [-143.8, 57.3], [-148.5, 54.2], [-148.5, -49.2], [-119.7, -49.2]];
+  F.slice(1).forEach((b, i) => {
+    const a = F[i], len = Math.hypot(b[0] - a[0], b[1] - a[1]), ry = Math.atan2(-(b[1] - a[1]), b[0] - a[0]);
+    const g = new THREE.PlaneGeometry(len, 1.8), uv = g.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setX(k, uv.getX(k) * len / 1.6);
+    const f = new THREE.Mesh(g, fenceMat); f.position.set((a[0] + b[0]) / 2, 0.9, (a[1] + b[1]) / 2); f.rotation.y = ry; scene.add(f);
+    for (let t = 0; t <= len; t += 3) box(0.1, 1.9, 0.1, mat.steel, a[0] + (b[0] - a[0]) * t / len, 0.95, a[1] + (b[1] - a[1]) * t / len);
+  });
+}
 // smaller lot across Academic Freedom Rd
 const NORTH_LOT = satPoly([[548, -10], [895, -10], [895, 80], [548, 80]]);
 flat(shapeFrom(NORTH_LOT), mat.asphalt, 0.05);
@@ -502,7 +1387,7 @@ const hwX = z => HW[0][0] + (z - HW[0][1]) * (HW[1][0] - HW[0][0]) / (HW[1][1] -
 roadSeg(...HW[0], ...HW[1], 34, hwMat, 0.06, 12);
 road(JJ, 10);
 const AFR = satPoly([[-1500, 560], [0, 215], [300, 135], [470, 108], [1060, 150], [1525, 102], [3000, 40]]);   // Academic Freedom Rd
-const NUR = satPoly([[505, 112], [505, 553]]);   // New University Rd, ends where the De'lish road leaves it
+const NUR = satPoly([[505, 112], [505, 563]]);   // New University Rd, ends at the grandstand car park's entry/exit
 const LINKS = [satPoly([[505, 540], [250, 540], [250, 685], [40, 690]]), satPoly([[1065, 150], [1065, 192]])];
 road(AFR, 11); road(NUR, 10); LINKS.forEach(l => road(l, 8, mat.asphalt, 0.055));
 // forecourt north-west of the stadium: a two-lane access road off New University Rd, joined by a second in/out lane,
@@ -538,7 +1423,7 @@ function prism(w, l, h, material) {
 const builtRects = [];
 function building(x, z, w, l, h, rot, roofMat, wallMat = mat.wall) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rot; scene.add(g);
-  box(w, h, l, wallMat, 0, h / 2, 0, g);
+  box(w, h + 3, l, wallMat, 0, (h - 3) / 2, 0, g);   // walls run on below ground, for sloping sites
   if (roofMat) { const r = prism(w + 1.6, l + 1.6, Math.min(w, l) * 0.32, roofMat); r.position.y = h; r.castShadow = true; g.add(r); }
   else box(w + 0.6, 0.6, l + 0.6, mat.concrete, 0, h + 0.3, 0, g);
   const e = Math.max(w, l) / 2 + 4; builtRects.push([x - e, z - e, x + e, z + e]);
@@ -553,6 +1438,8 @@ const POOL = satPoly([[0, 405], [115, 405], [115, 490], [0, 490]]), COURTS = sat
 flat(shapeFrom(satPoly([[-12, 393], [127, 393], [127, 502], [-12, 502]])), mat.concrete, 0.055);
 flat(shapeFrom(POOL), M('pool', 0x4a9fd6, { roughness: 0.3 }), 0.06);
 flat(shapeFrom(COURTS), M('courts', 0x5f8f9c), 0.06);
+// by the grandstand car park: the power room
+building(-119.6, 65.2, 5.6, 12.4, 3.2, 0, null);
 // town across Legon East Rd
 for (let i = 0; i < 90; i++) {
   const z = rr(-650, 650), x = hwX(z) + rr(32, 440), tall = rand() < 0.18;
@@ -565,7 +1452,7 @@ const inStad = (x, z, a, r) => Math.hypot(Math.max(Math.abs(x) - a, 0), z) < r;
 const inPoly = (x, z, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, zi] = P[i], [xj, zj] = P[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
 const segDist = (x, z, [ax, az], [bx, bz]) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz))); return Math.hypot(x - ax - t * dx, z - az - t * dz); };
 function free(x, z) {
-  if ([CARPARK, WEST_LOT, OCT, NORTH_LOT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
+  if ([CARPARK, LOT91, OCT, NORTH_LOT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
   const dx = x - W.x, dz = z - W.z, c = Math.cos(W.rot), s = Math.sin(W.rot);
   if (inStad(dx * c - dz * s, dx * s + dz * c, A, 62)) return false;
   if (x > hwX(z) - 48 && x < hwX(z) + 24) return false;   // highway + service road
@@ -580,6 +1467,7 @@ zone(-122, 240, 155, 420, 70);      // south, round the buildings
 zone(-420, 230, -420, -192, 90);    // north of Academic Freedom Rd
 zone(200, 760, -500, 500, 90);      // across the highway
 zone(-700, -420, -300, 400, 40);
+treePts.push(...islandTrees);
 
 {
   const canopy = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), mat.tree, treePts.length);
@@ -593,14 +1481,134 @@ zone(-700, -420, -300, 400, 40);
   canopy.castShadow = trunk.castShadow = true; canopy.receiveShadow = true; scene.add(canopy, trunk);
 }
 
+// palms (instanced)
+{
+  const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.14, 0.24, 1, 6), M('palmTrunk', 0x8a7458), palmPts.length);
+  const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), M('palmCrown', 0x5f8d3b, { flatShading: true }), palmPts.length);
+  const o = new THREE.Object3D();
+  palmPts.forEach(([x, z, h], i) => {
+    o.position.set(x, h / 2, z); o.scale.set(1, h, 1); o.rotation.set(0, 0, 0); o.updateMatrix(); trunk.setMatrixAt(i, o.matrix);
+    o.position.set(x, h + 0.2, z); o.scale.set(2, 0.55, 2); o.rotation.y = i * 1.3; o.updateMatrix(); crown.setMatrixAt(i, o.matrix);
+  });
+  trunk.castShadow = crown.castShadow = true; scene.add(trunk, crown);
+}
+
+// ---- yards in the corners beside the grandstand ends, at road level against the boundary wall, which retains the higher
+// ground behind (site photos). North-west: a shaded car port, a stair up to a gate, generators and fuel tanks behind mesh
+// fences. South-west: the two 40 ft storage containers. A mural runs along the wall behind both. Built at pitch level;
+// the levelling pass below lowers them with the ground.
+{
+  const inward = (a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz); let nx = -dz / L, nz = dx / L; if (nx * (a[0] + b[0]) + nz * (a[1] + b[1]) > 0) { nx = -nx; nz = -nz; } return [nx, nz]; };
+  const pt = (a, b, d, off) => { const [nx, nz] = inward(a, b), L = Math.hypot(b[0] - a[0], b[1] - a[1]); return [a[0] + (b[0] - a[0]) * d / L + nx * off, a[1] + (b[1] - a[1]) * d / L + nz * off]; };
+  const ang = (a, b) => Math.atan2(-(b[1] - a[1]), b[0] - a[0]);
+  const along3 = (a, b, d, off, w, h, dp, m, y = h / 2) => { const [x, z] = pt(a, b, d, off), o = box(w, h, dp, m, x, y, z); o.rotation.y = ang(a, b); return o; };
+  const fenceRun = (a, b, d0, d1, off, h = 2.0) => {
+    const L = d1 - d0, g = new THREE.PlaneGeometry(L, h), uv = g.attributes.uv, [x, z] = pt(a, b, (d0 + d1) / 2, off);
+    for (let k = 0; k < uv.count; k++) uv.setX(k, uv.getX(k) * L / 1.6);
+    const f = new THREE.Mesh(g, fenceMat); f.position.set(x, h / 2 + 0.1, z); f.rotation.y = ang(a, b); scene.add(f);
+  };
+  // mural: colourful panels of athletes, flags and stars
+  const muralTex = canvasTex(2048, 136, (x) => {
+    let sd = 7; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    const cols = ['#e5432f', '#f3c623', '#2fa84f', '#2f64b4', '#e8622a', '#7a3fa0', '#1fa7b8', '#d6336c'];
+    for (let px = 0; px < 2048;) { const w = 60 + Math.floor(rnd() * 120); x.fillStyle = cols[Math.floor(rnd() * cols.length)]; x.fillRect(px, 0, w, 136); px += w; }
+    for (let i = 0; i < 9; i++) {   // flags
+      const fx = rnd() * 1960, fy = 10 + rnd() * 60, fl = [['#ce1126', '#fcd116', '#006b3f'], ['#009e49', '#fff', '#ef2b2d'], ['#002868', '#fff', '#bf0a30']][i % 3];
+      fl.forEach((c, k) => { x.fillStyle = c; x.fillRect(fx, fy + k * 12, 70, 12); });
+    }
+    x.lineCap = 'round';
+    for (let i = 0; i < 16; i++) {   // athletes
+      const ax = 40 + rnd() * 1960, ay = 40 + rnd() * 50, c = ['#2b1c16', '#5a3424', '#fff'][i % 3];
+      x.fillStyle = x.strokeStyle = c; x.lineWidth = 9;
+      x.beginPath(); x.arc(ax, ay - 26, 9, 0, 7); x.fill();
+      x.beginPath(); x.moveTo(ax, ay - 16); x.lineTo(ax - 4, ay + 14); x.moveTo(ax - 4, ay + 14); x.lineTo(ax - 18, ay + 38); x.moveTo(ax - 4, ay + 14); x.lineTo(ax + 16, ay + 34);
+      x.moveTo(ax - 2, ay - 8); x.lineTo(ax + 20, ay - 22); x.moveTo(ax - 2, ay - 8); x.lineTo(ax - 22, ay + 2); x.stroke();
+    }
+    x.fillStyle = '#fff';
+    for (let i = 0; i < 22; i++) { const sx = rnd() * 2048, sy = rnd() * 136; x.beginPath(); for (let k = 0; k < 10; k++) { const r = k % 2 ? 3 : 8, an = -Math.PI / 2 + k * Math.PI / 5; x.lineTo(sx + r * Math.cos(an), sy + r * Math.sin(an)); } x.fill(); }
+  });
+  const mural = (a, b, d0, d1) => {
+    const L = d1 - d0, [nx, nz] = inward(a, b), [x, z] = pt(a, b, (d0 + d1) / 2, 0.25), t = muralTex.clone();
+    t.needsUpdate = true; t.repeat.set(L / 48, 1);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(L, 3.2), new THREE.MeshStandardMaterial({ map: t, roughness: 0.9 }));
+    m.position.set(x, 1.8, z); m.rotation.y = Math.atan2(nx, nz); scene.add(m);
+  };
+  const wNW = [o7[0], -67.4], wSW = [o6[0], 67.4];
+  mural(wNW, o7, 0, Math.hypot(o7[0] - wNW[0], o7[1] - wNW[1])); mural(o7, o0, 0, 3.2); mural(o7, o0, 6.2, 40);
+  mural(wSW, o6, 0, Math.hypot(o6[0] - wSW[0], o6[1] - wSW[1])); mural(o6, o5, 0, 40);
+
+  // north-west: car port with three bays against the west wall, under a blue shade sail
+  roadSeg(o7[0] + 2.6, -68, o7[0] + 2.6, -76.6, 5, lineBayMat, 0.1, 10);
+  { const sail = box(9.2, 0.06, 5.8, M('shadeSail', 0x2f6fd0, { side: DS }), o7[0] + 2.9, 3.1, -72.3); sail.rotation.x = 0.06; sail.rotation.z = -0.05; sail.castShadow = true;
+    [[0.3, -67.9], [0.3, -76.7], [5.6, -67.9], [5.6, -76.7]].forEach(([dx, z]) => box(0.12, 3.1, 0.12, mat.steel, o7[0] + dx, 1.55, z)); }
+  // stair up to the gate in the wall
+  const [gx, gz] = pt(o7, o0, 4.7, 0), [ix, iz] = pt(o7, o0, 4.7, 1.6), H = Hout(gx) - Hin(ix, iz), nSt = Math.ceil(H / 0.175), rs = H / nSt;
+  along3(o7, o0, 4.75, 1.35, 2.9, H, 2.7, mat.concrete);   // landing
+  for (let i = 0; i < nSt - 1; i++) {
+    const top = H - (i + 1) * rs, d = 6.2 + (i + 0.5) * 0.3;
+    along3(o7, o0, d, 1.6, 0.32, top, 2.2, mat.concrete);
+    along3(o7, o0, d, 2.8, 0.32, top + 0.9, 0.2, boundaryConc);   // stepped side wall
+  }
+  [3.3, 6.1].forEach(d => along3(o7, o0, d, 0.1, 0.4, H + 2.4, 0.4, boundaryConc));   // gate piers
+  { const [x, z] = pt(o7, o0, 4.7, 0.06), g = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.1), sideGateMat); g.position.set(x, H + 1.15, z); g.rotation.y = ang(o7, o0); scene.add(g); }
+  // generators and fuel tanks behind mesh fences, on concrete pads
+  const genMat = M('genset', 0xa3a8ac), genDark = M('gensetDark', 0x4d5257), tankMat = M('fuelTank', 0xd9dcdd, { metalness: 0.4, roughness: 0.4 });
+  along3(o7, o0, 20, 1.7, 12.6, 0.15, 3.2, mat.concrete);
+  [16.8, 22.9].forEach(d => {
+    along3(o7, o0, d, 1.6, 5.2, 2.5, 2.3, genMat, 1.4);
+    along3(o7, o0, d - 1.2, 2.77, 1.4, 1.6, 0.04, genDark, 1.3);   // louvred door panels
+    along3(o7, o0, d + 1.0, 2.77, 1.4, 1.6, 0.04, genDark, 1.3);
+  });
+  fenceRun(o7, o0, 13.8, 26.2, 3.3);
+  along3(o7, o0, 31, 1.3, 10.6, 0.15, 2.4, mat.concrete);
+  [28.4, 33.6].forEach(d => {
+    const [x, z] = pt(o7, o0, d, 1.25), t = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 4.4, 18), tankMat);
+    t.rotation.order = 'YZX'; t.rotation.y = ang(o7, o0); t.rotation.z = Math.PI / 2; t.position.set(x, 1.2, z); t.castShadow = true; scene.add(t);
+    [-1.4, 1.4].forEach(e => along3(o7, o0, d + e, 1.25, 0.3, 0.5, 1.2, mat.concrete, 0.25));   // saddles
+  });
+  fenceRun(o7, o0, 25.8, 36.2, 2.3);
+
+  // south-west: the two storage containers end to end along the wall
+  const contMat = M('container', 0xe9e7e0, { roughness: 0.7 }), contTrim = M('containerTrim', 0x2f8a4a);
+  [7.6, 20.4].forEach(d => { along3(o6, o5, d, 2.0, 12.2, 2.6, 2.44, contMat, 1.45); along3(o6, o5, d, 2.0, 12.3, 0.16, 2.5, contTrim, 0.15); along3(o6, o5, d, 2.0, 12.3, 0.12, 2.5, contTrim, 2.75); });
+}
+
+// ---------- lay everything outside the stadium onto the site levels: flat pieces follow the ground, everything else moves
+// with the ground under it
+function drapeGeo(g, Mx) {
+  let tris = trisOf(g, Mx);
+  [LX0, LX1].forEach(X => { tris = splitTris(tris, X); });
+  const inside = t => inPolyW((t[0].v.x + t[1].v.x + t[2].v.x) / 3, (t[0].v.z + t[1].v.z + t[2].v.z) / 3, OCT);
+  if (tris.some(inside)) tris = subdivTris(tris, 3);
+  const ng = fromTris(tris, t => inside(t) ? Hin : x => Hout(x), Mx.clone().invert()); g.dispose(); return ng;
+}
+scene.children.slice().forEach(o => {
+  if (o === S || o.isLight || o.userData.lvl) return;
+  if (o.isInstancedMesh) {
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m4); m4.elements[13] += LVL(m4.elements[12], m4.elements[14]); o.setMatrixAt(i, m4); }
+    o.instanceMatrix.needsUpdate = true; o.boundingSphere = null; return;
+  }
+  if (o.isMesh) {
+    o.geometry.computeBoundingBox();
+    const sz = o.geometry.boundingBox.getSize(new THREE.Vector3());
+    if (sz.y < 0.3 && Math.max(sz.x, sz.z) > 0.6) { o.updateMatrix(); o.geometry = drapeGeo(o.geometry, o.matrix); return; }
+  }
+  o.position.y += LVL(o.position.x, o.position.z);
+});
+
 // ---------- labels
 const at = (px, py, y) => { const [x, z] = sat(px, py); return [x, y, z]; };
 const LABELS = [
   { t: 'Main Stadium', p: [0, 34, -40], d: 320 },
   { t: 'Main Grandstand', p: [-66, 26, 0], d: 200 },
+  { t: 'North Stand', p: [0, 14, -A - SR1 + 4], cam: [0, 38, -15] },   // cam: viewed from across the pitch
+  { t: 'East Stand', p: [SR1 - 4, 14, 0], cam: [-20, 38, 0] },
+  { t: 'South Stand', p: [0, 14, A + SR1 - 4], cam: [0, 38, 15] },
   { t: 'Warm-up Track', p: [W.x, 4, W.z], d: 280 },
   { t: 'Car Park', p: at(1390, 650, 10), d: 340 },
   { t: 'North Car Park', p: at(720, 35, 4), d: 240 },
+  { t: 'Grandstand Car Park', p: [-127, 4, 18], d: 220 },
   { t: 'Legon East Rd', p: [hwX(-250), 2, -250], d: 360, sm: true },
   { t: 'Academic Freedom Rd', p: at(300, 135, 2), d: 300, sm: true },
   { t: 'New University Rd', p: at(505, 300, 2), d: 240, sm: true },
@@ -610,7 +1618,7 @@ const layer = document.getElementById('labels');
 LABELS.forEach(L => {
   const el = document.createElement('div'); el.className = 'lbl' + (L.sm ? ' sm' : '');
   el.innerHTML = `<button>${L.t}</button><i></i><b></b>`;
-  el.querySelector('button').onclick = () => fly([L.p[0], 0, L.p[2]], L.d);
+  el.querySelector('button').onclick = () => L.cam ? tweenTo(L.cam, [L.p[0], 2, L.p[2]]) : fly([L.p[0], 0, L.p[2]], L.d);
   layer.appendChild(el); L.el = el; L.v = new THREE.Vector3(...L.p);
 });
 const tmp = new THREE.Vector3();
@@ -647,6 +1655,9 @@ bar.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
 const tL = document.getElementById('tLabels'), tR = document.getElementById('tRotate');
 tL.onclick = () => { const on = tL.classList.toggle('on'); layer.style.visibility = on ? 'visible' : 'hidden'; };
 tR.onclick = () => { controls.autoRotate = tR.classList.toggle('on'); };
+// cutaway: hide the grandstand's roof, upper floors and louvres to look into the entrance level and the corridor below
+const tC = document.getElementById('tCut');
+tC.onclick = () => { const on = tC.classList.toggle('on'); cutaway.forEach(o => o.visible = !on); if (on) tweenTo([-150, 55, 70], [-74, -3, 0]); };
 controls.addEventListener('start', () => { anim = null; bar.querySelectorAll('[data-view]').forEach(x => x.classList.remove('on')); });
 
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
@@ -674,7 +1685,8 @@ function hitAt(e) {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const h = ray.intersectObjects(pickables, true).find(i => i.object.isMesh);
+  const shown = o => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+  const h = ray.intersectObjects(pickables, true).find(i => i.object.isMesh && shown(i.object));
   if (!h) return null;
   const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
   const p = h.point.clone().addScaledVector(n, pen.size * 0.6 + 0.15);
