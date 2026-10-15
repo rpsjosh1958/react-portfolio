@@ -197,12 +197,12 @@ function cap(u, prof, a, material, parent) {
   const m = new THREE.Mesh(g, material); m.castShadow = true; parent.add(m);
 }
 const mesh = (g, m, parent = scene) => { const o = new THREE.Mesh(g, m); o.castShadow = o.receiveShadow = true; parent.add(o); return o; };
-function roadSeg(x0, z0, x1, z1, w, material, y, tileLen) {
+function roadSeg(x0, z0, x1, z1, w, material, y, tileLen, parent = scene) {
   const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz);
   const g = new THREE.PlaneGeometry(L, w); const uv = g.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * L / tileLen);
   g.rotateX(-Math.PI / 2);
-  const m = new THREE.Mesh(g, material); m.position.set((x0 + x1) / 2, y, (z0 + z1) / 2); m.rotation.y = Math.atan2(-dz, dx); m.receiveShadow = true; scene.add(m); return m;
+  const m = new THREE.Mesh(g, material); m.position.set((x0 + x1) / 2, y, (z0 + z1) / 2); m.rotation.y = Math.atan2(-dz, dx); m.receiveShadow = true; parent.add(m); return m;
 }
 const DS = THREE.DoubleSide;
 [mat.seat, mat.concrete, mat.white].forEach(m => m.side = DS);
@@ -218,11 +218,22 @@ const facadeTex = canvasTex(1024, 128, (x) => {
 facadeTex.wrapT = THREE.ClampToEdgeWrapping;
 const facadeMat = M('facade', 0xffffff, { map: facadeTex, side: DS });
 
-const stallMat = M('parkingBay', 0xffffff, { map: canvasTex(256, 128, (x) => {
-  x.fillStyle = '#d9d3c4'; x.fillRect(0, 0, 256, 128);
-  x.fillStyle = '#f8f6f0'; x.fillRect(0, 62, 256, 4);
-  for (let i = 0; i < 256; i += 64) x.fillRect(i, 8, 3, 112);
-  x.fillStyle = '#b9b2a2'; x.fillRect(0, 0, 256, 6); x.fillRect(0, 122, 256, 6);
+const stallMat = M('parkingBay', 0xffffff, { map: canvasTex(256, 256, (x) => {
+  x.fillStyle = '#ddd8cc'; x.fillRect(0, 0, 256, 256);
+  x.fillStyle = '#aaa391';
+  x.fillRect(0, 124, 256, 3); x.fillRect(0, 130, 256, 3);
+  for (let i = 0; i < 256; i += 64) { x.fillRect(i, 6, 3, 114); x.fillRect(i, 137, 3, 114); }
+}) });
+const edgeBayMat = M('edgeBays', 0xffffff, { map: canvasTex(256, 128, (x) => {
+  x.fillStyle = '#ddd8cc'; x.fillRect(0, 0, 256, 128);
+  x.fillStyle = '#aaa391'; for (let i = 0; i < 256; i += 64) x.fillRect(i, 0, 3, 122);
+}) });
+const lineBayMat = M('bayLines', 0xffffff, { map: canvasTex(256, 128, (x) => {
+  x.fillStyle = '#f2f0ea'; for (let i = 0; i < 256; i += 64) x.fillRect(i, 6, 4, 116);
+}), transparent: true, depthWrite: false });
+const laneMat = M('lane', 0xffffff, { map: canvasTex(128, 128, (x) => {
+  x.fillStyle = '#5c5f64'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#f2f0ea'; x.fillRect(0, 62, 64, 4);
 }) });
 const hwMat = M('highway', 0xffffff, { map: canvasTex(128, 384, (x) => {
   x.fillStyle = '#5b5e63'; x.fillRect(0, 0, 128, 384);
@@ -239,11 +250,13 @@ const roadMat = M('road', 0xffffff, { map: canvasTex(128, 128, (x) => {
 // ---------- ground
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), mat.ground);
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
-const EARTH = [[38, 175], [45, 96], [112, 58], [118, -20], [105, -95], [232, -112], [262, -30], [305, 96], [322, 262], [232, 334], [78, 292]];
+// Site layout traced from a north-up satellite image: K metres per image pixel, (CX, CY) = main stadium centre in that image.
+// ponytail: hand-traced; nudge K / CX / CY or individual points if something sits off.
+const K = 0.3, CX = 882, CY = 727;
+const sat = (px, py) => [(px - CX) * K, (py - CY) * K];
+const satPoly = pts => pts.map(p => sat(...p));
+const EARTH = satPoly([[700, 1195], [1630, 1185], [1700, 1230], [1700, 1300], [1180, 1290], [1100, 1262], [700, 1268]]);
 flat(shapeFrom(EARTH), mat.earth, 0.02);
-// south-west dirt paths
-roadSeg(-180, 210, -60, 250, 6, mat.earth, 0.025, 10);
-roadSeg(-260, 150, -180, 210, 5, mat.earth, 0.025, 10);
 
 // ---------- athletics track + pitch
 const A = 42.2;
@@ -267,14 +280,55 @@ function buildTrack(parent, apron) {
 }
 
 // ---------- main stadium
-const S = new THREE.Group(); scene.add(S);
-flat(stadShape(A, 94), mat.asphalt, 0.04, S);
-flat(stadShape(A, 82), mat.concrete, 0.07, S);
+const S = new THREE.Group(); S.rotation.y = -Math.PI / 2; scene.add(S);   // long axis north–south, grandstand on the west
 flat(stadShape(A, 57), mat.grass, 0.09, S);
-loop(stadPts(A, 93.2), 0.08, S);
-// grass-ring footpaths
-[0.5, 1.5, 2.5, 3.5, 1.2, 1.8, 3.2, 3.8].forEach(u => {
-  const [x0, z0] = pp(u, 50, A), [x1, z1] = pp(u, 56.5, A); roadSeg(x0, z0, x1, z1, 2.2, mat.concrete, 0.1, 10);
+// octagonal perimeter wall; it closes onto the back corners of the grandstand, which sits in the wall line rather than inside it.
+// The ring between the wall and the stands is grey paving, with a tarmac service road running through it.
+const [o0, o1, o2, o3, o4, o5, o6, o7] = satPoly([[765, 265], [1005, 265], [1192, 440], [1192, 1012], [1005, 1190], [765, 1190], [575, 1012], [575, 440]]);
+const GS = [[o6[0], 32], [-81, 32], [-81, -32], [o7[0], -32]];   // notch round the grandstand's back
+const OCT = [o0, o1, o2, o3, o4, o5, o6, ...GS, o7];
+flat(shapeFrom(OCT), M('paving', 0x9a9da1), 0.085);
+// wall: low white base with a metal fence on top
+const fenceMat = M('fence', 0xffffff, { map: canvasTex(64, 64, (x) => {
+  x.fillStyle = '#4a4f55'; x.fillRect(0, 0, 64, 5); x.fillRect(0, 59, 64, 5);
+  for (let i = 0; i < 64; i += 8) x.fillRect(i, 0, 3, 64);
+}), alphaTest: 0.5, side: DS, roughness: 0.6, metalness: 0.4 });
+function wallSeg(a, b) {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]), ry = Math.atan2(-(b[1] - a[1]), b[0] - a[0]), mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+  box(len + 0.4, 1.1, 0.4, mat.white, mx, 0.55, mz).rotation.y = ry;
+  const g = new THREE.PlaneGeometry(len, 1.3), uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * len / 1.6);
+  const f = new THREE.Mesh(g, fenceMat); f.position.set(mx, 1.75, mz); f.rotation.y = ry; scene.add(f);
+}
+const along = (a, b, d) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]); return [a[0] + (b[0] - a[0]) * d / L, a[1] + (b[1] - a[1]) * d / L]; };
+// vehicles get in only at the north-east and south-east corners; five ticket gates along the east wall face the car park
+const ROAD_GATES = [along(o1, o0, 5), along(o1, o2, 5), along(o4, o3, 5), along(o4, o5, 5)];
+const TICKET_GATES = [-68, -34, 0, 34, 68];
+const east = TICKET_GATES.flatMap(z => [[o2[0], z - 2], [o2[0], z + 2]]);
+[[GS[2], GS[3], o7, o0, ROAD_GATES[0]],
+ [ROAD_GATES[1], o2, ...east, o3, ROAD_GATES[2]],
+ [ROAD_GATES[3], o5, o6, GS[0], GS[1]]]
+  .forEach(run => run.slice(1).forEach((b, i) => {
+    const a = run[i];
+    if (a[0] === o2[0] && b[0] === o2[0] && TICKET_GATES.some(z => Math.abs((a[1] + b[1]) / 2 - z) < 1)) return;   // opening
+    wallSeg(a, b);
+  }));
+ROAD_GATES.forEach(([x, z]) => box(0.9, 3, 0.9, mat.white, x, 1.5, z));   // gate pillars
+TICKET_GATES.forEach(z => {
+  const x = o2[0];
+  [-2.2, 2.2].forEach(d => box(0.4, 3.2, 0.4, mat.white, x, 1.6, z + d));   // frame
+  box(0.5, 0.5, 4.8, mat.white, x, 3.2, z);
+  box(2.4, 2.6, 2.4, mat.white, x + 2.6, 1.3, z - 4.2);                      // ticket kiosk on the car park side
+  box(3.2, 0.2, 3.2, mat.roof, x + 2.6, 2.7, z - 4.2);
+});
+// 7 m service road round the outside of the stands, ending at the grandstand's corners, with spurs to the two vehicle gates
+const RR = 85;   // centreline radius, clear of the floodlight masts at r 80
+mesh(band(2.91, 6.09, [[RR - 3.5, 0.095], [RR + 3.5, 0.095]], A, { tile: 12 }), roadMat, S);
+[ROAD_GATES.slice(0, 2), ROAD_GATES.slice(2)].forEach(([g0, g1]) => {
+  const gx = (g0[0] + g1[0]) / 2, gz = (g0[1] + g1[1]) / 2;
+  let best = [0, 0, Infinity];
+  for (let u = 0; u < 4; u += 0.005) { const [xl, zl] = pp(u, RR, A), d = Math.hypot(-zl - gx, xl - gz); if (d < best[2]) best = [-zl, xl, d]; }   // stadium group is turned -90°
+  roadSeg(gx, gz, best[0], best[1], 7, roadMat, 0.094, 12);
 });
 buildTrack(S, 50);
 
@@ -288,9 +342,9 @@ function stand(u0, u1, rows, h1, backMat) {
   const capProf = [...prof, [RF, h1], [RF, 0]];
   cap(u0, capProf, A, mat.white, S); cap(u1, capProf, A, mat.white, S);
 }
-stand(0.075, 0.925, 13, 12.5, mat.white);    // north straight — free-standing, gaps either end
-stand(0.995, 2.13, 13, 12.5, facadeMat);     // east curve, wraps onto south side
-stand(2.87, 4.005, 13, 12.5, facadeMat);     // west curve, wraps onto south side
+stand(0.075, 0.925, 13, 12.5, facadeMat);    // east straight — free-standing, gaps either end
+stand(0.995, 2.005, 13, 12.5, facadeMat);    // south curve, stops short of the grandstand
+stand(2.995, 4.005, 13, 12.5, facadeMat);    // north curve, stops short of the grandstand
 
 // main grandstand (south)
 {
@@ -326,31 +380,24 @@ stand(2.87, 4.005, 13, 12.5, facadeMat);     // west curve, wraps onto south sid
     const [x, z] = pp(u, r, A), [x2, z2] = pp(u + 0.002, r, A);
     const o = box(w, h, d, m, x, y, z, S); o.rotation.y = Math.atan2(-(z2 - z), x2 - x); return o;
   };
-  const path = (u, r0, r1, w = 3) => { const [a0, b0] = pp(u, r0, A), [a1, b1] = pp(u, r1, A); roadSeg(a0, b0, a1, b1, w, mat.concrete, 0.11, 10); };
+  const path = (u, r0, r1, w = 3) => { const [a0, b0] = pp(u, r0, A), [a1, b1] = pp(u, r1, A); roadSeg(a0, b0, a1, b1, w, mat.concrete, 0.11, 10, S); };
   // north stand: two walk-through tunnels onto the pitch
   [0.035, 0.96].forEach(u => {
-    path(u, 49.5, 84, 5);
+    path(u, 49.5, RR - 3.5, 5);
     place(u, 74, 12.6, 7, 0.6, 2.2, mat.concrete);             // concourse bridge over the gap
-    place(u, 79, 3.2, 8, 6.4, 6, mat.white);                  // entrance block outside
-    place(u, 82.05, 1.4, 3.6, 2.8, 0.1, darkMat);             // doorway
-    place(u, 82.05, 5.2, 7, 0.5, 0.1, darkMat);
   });
-  // curved stands: vomitories + aisle stairs
-  const vom = [1.12, 1.37, 1.63, 1.88, 3.12, 3.37, 3.63, 3.88];
-  vom.forEach(u => {
-    const h = seatH(61, 13, 12.5);
-    place(u, 60, h / 2 + 0.6, 4.2, h + 1.2, 6, mat.white);    // tunnel walls
-    place(u, 57.05, h / 2 + 0.2, 3, h + 0.4, 0.1, darkMat);   // tunnel mouth
-    place(u, 57.2, h + 1.0, 4.6, 0.9, 0.3, mat.seatRed);      // signage band
-    path(u, 50, 56.2, 3);
-  });
-  [1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 3.25, 3.5, 3.75, 4.0, 0.1, 0.2, 0.47, 0.53, 0.8, 0.9].forEach(u => {
-    const g = band(u - 0.004, u + 0.004, [[R0, 1.5], [R1, 12.7]], A); mesh(g, mat.concrete, S);
+  // eight tunnel entrances (vomitories) into the seating: middle and both diagonals of each curve, two on the east stand
+  // each is a portal at the foot of the stand, at pitch level, running back under the lower rows
+  [1.25, 1.5, 1.75, 3.25, 3.5, 3.75, 0.3, 0.7].forEach(u => {
+    place(u, R0 + 2, 1.6, 4.4, 3.2, 4, mat.white);           // portal block
+    place(u, R0 - 0.05, 1.3, 3, 2.6, 0.1, darkMat);          // tunnel mouth facing the pitch
+    place(u, R0 - 0.05, 3.0, 4.4, 0.35, 0.12, mat.seatRed);  // trim
+    path(u, 50, R0, 3);                                       // walkway across the grass to the track
   });
   // ground-level gates through the outer wall
-  [1.05, 1.25, 1.5, 1.75, 1.95, 2.08, 2.92, 3.05, 3.25, 3.5, 3.75, 3.95].forEach(u => {
+  [1.05, 1.25, 1.5, 1.75, 1.95, 3.05, 3.25, 3.5, 3.75, 3.95].forEach(u => {
     place(u, RF + 0.15, 1.3, 4.2, 2.6, 0.12, darkMat);
-    path(u, RF + 0.3, 82, 4.5);
+    path(u, RF + 0.3, RR - 3.5, 4.5);
   });
 }
 // floodlight masts
@@ -363,7 +410,8 @@ stand(2.87, 4.005, 13, 12.5, facadeMat);     // west curve, wraps onto south sid
 });
 
 // ---------- warm-up track
-const W = { x: 150, z: 178, rot: 0.72 };
+const [wx, wz] = sat(380, 1215);
+const W = { x: wx, z: wz, rot: -1.22 };   // south-west of the bowl, long axis ~20° off north
 const WG = new THREE.Group(); WG.position.set(W.x, 0, W.z); WG.rotation.y = W.rot; scene.add(WG);
 flat(stadShape(A, 55), mat.concrete, 0.07, WG);
 buildTrack(WG, 47.5);
@@ -374,39 +422,47 @@ rect(-40, -51.5, 40, -49, mat.pitchLight, 0.1, WG);
 
 // ---------- car parks
 const lampPos = [];
-function bays(x0, x1, z, depth = 12) {
-  const L = x1 - x0, g = new THREE.PlaneGeometry(L, depth), uv = g.attributes.uv;
-  for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * L / 10);
-  g.rotateX(-Math.PI / 2); const m = new THREE.Mesh(g, stallMat); m.position.set((x0 + x1) / 2, 0.08, z); m.receiveShadow = true; scene.add(m);
-  for (let x = x0 + 8; x < x1 - 4; x += 20) lampPos.push([x, z]);
+// double row of bays from c0 to c1 along z (ns) or x, centred at `at` on the other axis;
+// kerbed planting islands at both ends and every ~40 m, each with a lamp
+function row(at, c0, c1, ns = false) {
+  const n = Math.ceil((c1 - c0) / 42), seg = (c1 - c0) / n, P = c => ns ? [at, c] : [c, at];
+  for (let k = 0; k <= n; k++) {
+    const [x, z] = P(c0 + k * seg);
+    box(ns ? 11 : 2.4, 0.15, ns ? 2.4 : 11, mat.concrete, x, 0.075, z);
+    box(ns ? 10.4 : 1.8, 0.17, ns ? 1.8 : 10.4, mat.grass, x, 0.085, z);
+    lampPos.push([x, z]);
+    if (k === n) break;
+    const len = seg - 2.4, g = new THREE.PlaneGeometry(len, 11), uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * len / 10);
+    g.rotateX(-Math.PI / 2); if (ns) g.rotateY(Math.PI / 2);
+    const [mx, mz] = P(c0 + (k + 0.5) * seg), m = new THREE.Mesh(g, stallMat); m.position.set(mx, 0.06, mz); m.receiveShadow = true; scene.add(m);
+  }
 }
-// north (main) car park
-rect(-172, -264, 122, -100, mat.asphalt, 0.05);
-rect(-50, -104, 50, -88, mat.asphalt, 0.05);
-const XG = [[-163, -82], [-68, 20], [34, 113]];
-[-250, -228, -206, -170, -148, -126].forEach(z => XG.forEach(([a, b]) => bays(a, b, z)));
-flat(shapeFrom(Array.from({ length: 40 }, (_, i) => [-75 + 6.5 * Math.cos(i / 40 * 6.283), -188 + 6.5 * Math.sin(i / 40 * 6.283)])), mat.concrete, 0.08);
-flat(shapeFrom(Array.from({ length: 40 }, (_, i) => [-75 + 4.5 * Math.cos(i / 40 * 6.283), -188 + 4.5 * Math.sin(i / 40 * 6.283)])), mat.grass, 0.1);
-// south car park (continuous, runs straight off the ring road)
-const extraTrees = [];
-const paintMat = M('paintedBays', 0xffffff, { map: canvasTex(256, 128, (x) => {
-  x.fillStyle = '#5c5f64'; x.fillRect(0, 0, 256, 128);
-  x.fillStyle = '#f2f0ea'; x.fillRect(0, 63, 256, 2);
-  for (let i = 0; i < 256; i += 64) { x.fillRect(i, 4, 2, 120); }
-}) });
-function painted(x0, x1, z, depth) {
-  const L = x1 - x0, g = new THREE.PlaneGeometry(L, depth), uv = g.attributes.uv;
-  for (let i = 0; i < uv.count; i++) { uv.setX(i, uv.getX(i) * L / 10); uv.setY(i, 0.5 + (uv.getY(i) - 0.5) * depth / 12); }
-  g.rotateX(-Math.PI / 2); const m = new THREE.Mesh(g, paintMat); m.position.set((x0 + x1) / 2, 0.06, z); m.receiveShadow = true; scene.add(m);
+// main car park east of the stadium, wrapping round the bowl as a forecourt. Inside: north–south rows on an 18 m grid
+// (11 m of bays + 7 m aisle) with a 17 m spine between x 124 and 152 and 8 m cross aisles; each block only holds the
+// rows that clear the slanted east kerb by a full aisle, and a single row of bays lines that kerb.
+const CARPARK = satPoly([[520, 182], [1435, 182], [1478, 212], [1615, 1182], [520, 1192]]);
+flat(shapeFrom(CARPARK), mat.asphalt, 0.05);
+CARPARK.forEach((p, i) => roadSeg(...p, ...CARPARK[(i + 1) % CARPARK.length], 0.8, mat.concrete, 0.055, 10));   // kerb
+[[-154, -84, [106, 124, 152]],
+ [-76, -6, [106, 124, 152, 170]],
+ [2, 40, [106, 124, 152, 170]],
+ [48, 72, [152, 170, 188]],
+ [80, 128, [152, 170, 188]]]
+  .forEach(([z0, z1, xs]) => xs.forEach(x => row(x, z0, z1, true)));
+{
+  const [a, b] = [CARPARK[2], CARPARK[3]], ex = z => a[0] + (z - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);   // east kerb x at z
+  roadSeg(ex(-146) - 3.3, -146, ex(128) - 3.3, 128, 5.5, edgeBayMat, 0.06, 10);
+  for (let z = -140; z < 128; z += 40) lampPos.push([ex(z) - 0.9, z]);
 }
-function island(x0, x1, z, w) {
-  rect(x0, z - w / 2, x1, z + w / 2, mat.concrete, 0.08); rect(x0 + 0.5, z - w / 2 + 0.5, x1 - 0.5, z + w / 2 - 0.5, mat.earth, 0.09);
-  for (let x = x0 + 8; x < x1 - 4; x += rr(12, 22)) extraTrees.push([x, z, rr(3.5, 5.5)]);
-}
-flat(shapeFrom([[-140, 60], [112, 60], [112, 128], [74, 170], [-140, 170]]), mat.asphalt, 0.05);
-painted(-128, 104, 106, 12);
-painted(-128, 96, 123, 6); island(-128, 96, 127.5, 3); painted(-128, 96, 132, 6);
-painted(-128, 66, 148, 12);
+row(70, -154, -122, true); row(88, -154, -104, true);   // short rows tucked against the stadium's north-east corner
+// smaller lot across Academic Freedom Rd
+const NORTH_LOT = satPoly([[548, -10], [895, -10], [895, 80], [548, 80]]);
+flat(shapeFrom(NORTH_LOT), mat.asphalt, 0.05);
+row(-207.6, -96, 0);
+// paved walk running south past the warm-up track
+const WALK = satPoly([[630, 1180], [705, 1180], [700, 1600], [625, 1600]]);
+flat(shapeFrom(WALK), mat.concrete, 0.06);
 // lamps (instanced)
 {
   const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.2, 9, 6), mat.lamp, lampPos.length);
@@ -417,37 +473,47 @@ painted(-128, 66, 148, 12);
 }
 
 // ---------- roads
-const HWZ = -300;
-roadSeg(-1600, HWZ, 1600, HWZ, 36, hwMat, 0.06, 12);
-const SR = [[-200, -282], [-262, 600]];
-roadSeg(SR[0][0], SR[0][1], SR[1][0], SR[1][1], 14, roadMat, 0.065, 12);
-roadSeg(400, -282, 400, 600, 12, roadMat, 0.065, 12);
-roadSeg(-209, -188, -172, -188, 10, mat.asphalt, 0.055, 10);
-roadSeg(-30, -282, -30, -264, 12, mat.asphalt, 0.055, 10);
-roadSeg(-236, 130, -135, 130, 10, mat.asphalt, 0.055, 10);
-roadSeg(108, 112, 175, 112, 8, mat.asphalt, 0.055, 10);
-roadSeg(175, 112, 400, -20, 8, mat.earth, 0.03, 10);
-roadSeg(122, -100, 400, -120, 10, roadMat, 0.065, 12);
-// west link road: north car park → ring road → south car park
-const WL = [[-166, -100], [-168, -40], [-166, 70], [-150, 128]];
-// paved forecourt between link road and ring road + red-earth verge to the main road
-flat(shapeFrom([[-178, -104], [-42, -104], ...Array.from({ length: 41 }, (_, k) => pp(4 - k / 40, 92, A)), [-42, 100], [-150, 140], [-178, 70], [-180, -40]]), mat.asphalt, 0.045);
-const VERGE = [[-200, -190], [-184, -110], [-186, -40], [-184, 70], [-170, 128], [-226, 128], [-218, 70], [-210, -40], [-203, -190]];
-flat(shapeFrom(VERGE), mat.earth, 0.03);
 const circ = (x, z, r, m, y) => flat(shapeFrom(Array.from({ length: 32 }, (_, k) => [x + r * Math.cos(k / 32 * 6.283), z + r * Math.sin(k / 32 * 6.283)])), m, y);
-for (let i = 0; i < WL.length - 1; i++) {
-  const [x0, z0] = WL[i], [x1, z1] = WL[i + 1], dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz);
-  let nx = -dz / L, nz = dx / L; if (nx > 0) { nx = -nx; nz = -nz; }
-  roadSeg(x0, z0, x1, z1, 14, roadMat, 0.066 + i * 0.002, 12);
-  if (i < 2) {
-    roadSeg(x0 + nx * 10, z0 + nz * 10, x1 + nx * 10, z1 + nz * 10, 6, stallMat, 0.067, 10);
-    roadSeg(x0 - nx * 9, z0 - nz * 9, x1 - nx * 9, z1 - nz * 9, 4, mat.concrete, 0.068, 10);
-    roadSeg(x0 - nx * 9, z0 - nz * 9, x1 - nx * 9, z1 - nz * 9, 2.6, mat.earth, 0.069, 10);
-  }
-  circ(x1, z1, 7, mat.asphalt, 0.072);
+// polyline road: textured segments with round joints so the bends close up
+function road(pts, w, m = roadMat, y = 0.065) {
+  pts.forEach((p, i) => {
+    if (i) roadSeg(...pts[i - 1], ...p, w, m, y, 12);
+    if (i && i < pts.length - 1) circ(...p, w / 2, mat.asphalt, y + 0.001);
+  });
 }
-circ(-166, -100, 9, mat.asphalt, 0.073); circ(-166, -100, 3.5, mat.concrete, 0.075);
-roadSeg(-168, 0, -134, 0, 8, mat.asphalt, 0.05, 10);
+const HW = satPoly([[1075, -4600], [2400, 6000]]);   // Legon East Rd (N4)
+const JJ = satPoly([[955, -4600], [2280, 6000]]);    // J.J. Rawlings Ave service road
+const hwX = z => HW[0][0] + (z - HW[0][1]) * (HW[1][0] - HW[0][0]) / (HW[1][1] - HW[0][1]);
+roadSeg(...HW[0], ...HW[1], 34, hwMat, 0.06, 12);
+road(JJ, 10);
+const AFR = satPoly([[-1500, 560], [0, 215], [300, 135], [470, 108], [1060, 150], [1525, 102], [3000, 40]]);   // Academic Freedom Rd
+const NUR = satPoly([[505, 112], [505, 560], [512, 1000]]);   // New University Rd, stopped short of the warm-up track
+const LINKS = [satPoly([[505, 540], [250, 540], [250, 685], [40, 690]]), satPoly([[1065, 150], [1065, 192]])];
+road(AFR, 11); road(NUR, 10); LINKS.forEach(l => road(l, 8, mat.asphalt, 0.055));
+// forecourt north-west of the stadium: a two-lane access road off New University Rd, joined by a second in/out lane,
+// runs along the north of the bowl into the car park, with a link to the first vehicle gate. Walled off from the road.
+const NX = NUR[0][0] + 5;   // east edge of New University Rd
+road([[NX, -146], [40, -146], [52, -141], [57, -131]], 10, laneMat, 0.066);
+road([[NX, -124], [-96, -124], [-80, -132], [-64, -143], [-50, -146]], 7, laneMat, 0.0655);   // leaves square-on, then merges
+{ const [g0, g1] = ROAD_GATES; roadSeg((g0[0] + g1[0]) / 2, (g0[1] + g1[1]) / 2, 38, -146, 7, laneMat, 0.0652, 12); }
+const paintMat = M('roadLine', 0xf2f0ea);
+[[-146, 10], [-124, 7]].forEach(([zc, w]) => {
+  // flared mouth over New University Rd's edge line, so the junction reads as one kerbed opening
+  flat(shapeFrom([[NX - 0.8, zc - w / 2 - 4], [NX + 4, zc - w / 2], [NX + 4, zc + w / 2], [NX - 0.8, zc + w / 2 + 4]]), mat.asphalt, 0.0668);
+  roadSeg(NX + 1.2, zc - w / 2, NX + 1.2, w > 8 ? zc : zc + w / 2, 0.45, paintMat, 0.067, 10);   // give-way line on the lane heading out
+});
+const fx = CARPARK[0][0] + 0.8;   // just inside the west kerb, with openings for the two roads
+[[[fx, CARPARK[0][1]], [fx, -152]], [[fx, -140], [fx, -128.5]], [[fx, -119.5], [fx, o7[1]], o7]]
+  .forEach(run => run.slice(1).forEach((b, i) => wallSeg(run[i], b)));
+[-152, -140, -128.5, -119.5].forEach(z => box(0.8, 1.9, 0.8, mat.white, fx, 0.95, z));   // posts at the openings
+// bays marked with white lines only: along the north kerb, and outside the stadium's north-west wall
+roadSeg(-85, CARPARK[0][1] + 3.3, 46, CARPARK[0][1] + 3.3, 5.5, lineBayMat, 0.058, 10);
+{
+  const d = [o0[0] - o7[0], o0[1] - o7[1]], L = Math.hypot(...d), n = [d[1] / L, -d[0] / L];   // outward normal
+  const P = t => [o7[0] + d[0] * t + n[0] * 3.4, o7[1] + d[1] * t + n[1] * 3.4];
+  roadSeg(...P(0.15), ...P(0.85), 5.5, lineBayMat, 0.058, 10);
+}
+roadSeg(...sat(700, 1225), ...sat(1715, 1215), 6, mat.earth, 0.03, 10);   // dirt track south of the car park
 
 // ---------- buildings
 function prism(w, l, h, material) {
@@ -462,14 +528,19 @@ function building(x, z, w, l, h, rot, roofMat, wallMat = mat.wall) {
   else box(w + 0.6, 0.6, l + 0.6, mat.concrete, 0, h + 0.3, 0, g);
   const e = Math.max(w, l) / 2 + 4; builtRects.push([x - e, z - e, x + e, z + e]);
 }
-// university buildings (NE)
-[[262, -205, 60, 16, 9, 0.05, 'terracotta'], [318, -160, 16, 46, 9, 0.05, 'terracotta'], [350, -60, 42, 14, 8, 0.05, 'terracotta'],
- [258, -150, 24, 13, 7, 0.1, 'redroof'], [292, -100, 14, 30, 7, 0.1, 'redroof'], [236, -170, 10, 26, 6, 0.1, 'redroof'],
- [362, -215, 28, 28, 10, 0.05, 'terracotta'], [210, -230, 14, 12, 6, 0.3, 'terracotta'], [340, -15, 22, 12, 7, 0, 'redroof']]
-  .forEach(([x, z, w, l, h, r, m]) => building(x, z, w, l, h, r, mat[m]));
-// town beyond the main road
-for (let i = 0; i < 70; i++) {
-  const x = rr(-650, 650), z = rr(-620, -345), tall = rand() < 0.18;
+// south of the car park (red roofs, set at an angle)
+[[1010, 1315, 30, 10], [1090, 1385, 27, 9], [930, 1445, 33, 10], [1030, 1470, 27, 9], [800, 1445, 18, 9]]
+  .forEach(([px, py, w, l]) => building(...sat(px, py), w, l, 6, -0.54, mat.redroof));
+// west of New University Rd, plus the pool and tennis courts
+[[350, 410, 30, 12], [370, 475, 24, 21], [55, 620, 33, 18]]
+  .forEach(([px, py, w, l]) => building(...sat(px, py), w, l, 7, 0, mat.terracotta));
+const POOL = satPoly([[0, 405], [115, 405], [115, 490], [0, 490]]), COURTS = satPoly([[65, 735], [190, 735], [190, 880], [65, 880]]);
+flat(shapeFrom(satPoly([[-12, 393], [127, 393], [127, 502], [-12, 502]])), mat.concrete, 0.055);
+flat(shapeFrom(POOL), M('pool', 0x4a9fd6, { roughness: 0.3 }), 0.06);
+flat(shapeFrom(COURTS), M('courts', 0x5f8f9c), 0.06);
+// town across Legon East Rd
+for (let i = 0; i < 90; i++) {
+  const z = rr(-650, 650), x = hwX(z) + rr(32, 440), tall = rand() < 0.18;
   const w = tall ? rr(14, 22) : rr(8, 15), l = tall ? rr(12, 18) : rr(8, 13), h = tall ? rr(14, 30) : rr(4, 8);
   building(x, z, w, l, h, rr(-0.15, 0.15), tall ? null : (rand() < 0.5 ? mat.terracotta : mat.redroof));
 }
@@ -478,28 +549,22 @@ for (let i = 0; i < 70; i++) {
 const inStad = (x, z, a, r) => Math.hypot(Math.max(Math.abs(x) - a, 0), z) < r;
 const inPoly = (x, z, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, zi] = P[i], [xj, zj] = P[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
 const segDist = (x, z, [ax, az], [bx, bz]) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz))); return Math.hypot(x - ax - t * dx, z - az - t * dz); };
-const PAVED = [[-178, -270, 128, -86], [-142, 86, 116, 178], ...builtRects];
 function free(x, z) {
-  if (inStad(x, z, A, 100)) return false;
+  if ([CARPARK, OCT, NORTH_LOT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
   const dx = x - W.x, dz = z - W.z, c = Math.cos(W.rot), s = Math.sin(W.rot);
   if (inStad(dx * c - dz * s, dx * s + dz * c, A, 62)) return false;
-  if (Math.abs(z - HWZ) < 24 || segDist(x, z, ...SR) < 12 || Math.abs(x - 400) < 10) return false;
-  if (inPoly(x, z, EARTH) || inPoly(x, z, VERGE)) return false;
-  for (let i = 0; i < WL.length - 1; i++) if (segDist(x, z, WL[i], WL[i + 1]) < 18) return false;
-  return !PAVED.some(([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1);
+  if (x > hwX(z) - 48 && x < hwX(z) + 24) return false;   // highway + service road
+  for (const [P, w] of [[AFR, 11], [NUR, 10], ...LINKS.map(l => [l, 8])])
+    for (let i = 1; i < P.length; i++) if (segDist(x, z, P[i - 1], P[i]) < w / 2 + 4) return false;
+  return !builtRects.some(([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1);
 }
 const treePts = [];
 const zone = (x0, x1, z0, z1, n) => { let t = 0; while (n > 0 && t++ < n * 30) { const x = rr(x0, x1), z = rr(z0, z1); if (free(x, z)) { treePts.push([x, z, rr(3, 6.5)]); n--; } } };
-zone(190, 420, -275, -30, 140);
-zone(-260, 70, 175, 340, 60);
-zone(-420, -205, -270, 340, 55);
-zone(320, 460, -30, 340, 45);
-zone(-600, 600, -350, -320, 50);
-zone(-600, 600, -640, -350, 110);
-zone(-150, 40, 180, 200, 6);
-treePts.push(...extraTrees);
+zone(-420, -122, -175, 420, 130);   // campus west of New University Rd
+zone(-122, 240, 155, 420, 70);      // south, round the buildings
+zone(-420, 230, -420, -192, 90);    // north of Academic Freedom Rd
+zone(200, 760, -500, 500, 90);      // across the highway
 zone(-700, -420, -300, 400, 40);
-zone(420, 700, -300, 400, 40);
 
 {
   const canopy = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), mat.tree, treePts.length);
@@ -514,15 +579,17 @@ zone(420, 700, -300, 400, 40);
 }
 
 // ---------- labels
+const at = (px, py, y) => { const [x, z] = sat(px, py); return [x, y, z]; };
 const LABELS = [
-  { t: 'Main Stadium', p: [0, 34, -20], d: 300 },
-  { t: 'Main Grandstand', p: [0, 26, 66], d: 200 },
+  { t: 'Main Stadium', p: [0, 34, -40], d: 320 },
+  { t: 'Main Grandstand', p: [-66, 26, 0], d: 200 },
   { t: 'Warm-up Track', p: [W.x, 4, W.z], d: 280 },
-  { t: 'Car Park', p: [-25, 10, -188], d: 340 },
-  { t: 'South Car Park', p: [-80, 4, 152], d: 260 },
-  { t: 'Main Road', p: [-330, 2, HWZ], d: 360, sm: true },
-  { t: 'Ring Road', p: [-A - 88, 2, 0], d: 240, sm: true },
-  { t: 'University Buildings', p: [292, 16, -150], d: 300 }
+  { t: 'Car Park', p: at(1390, 650, 10), d: 340 },
+  { t: 'North Car Park', p: at(720, 35, 4), d: 240 },
+  { t: 'Legon East Rd', p: [hwX(-250), 2, -250], d: 360, sm: true },
+  { t: 'Academic Freedom Rd', p: at(300, 135, 2), d: 300, sm: true },
+  { t: 'New University Rd', p: at(505, 300, 2), d: 240, sm: true },
+  { t: 'University Buildings', p: at(990, 1400, 12), d: 300 }
 ];
 const layer = document.getElementById('labels');
 LABELS.forEach(L => {
@@ -544,9 +611,9 @@ function updateLabels() {
 
 // ---------- views
 const VIEWS = {
-  overview: { p: [-360, 260, -400], t: [30, 0, -20] },
-  stadium: { p: [-150, 120, 210], t: [0, 0, 0] },
-  top: { p: [30, 820, 0.5], t: [30, 0, 0] }
+  overview: { p: [-380, 280, -360], t: [40, 0, 10] },
+  stadium: { p: [210, 120, 90], t: [0, 0, 0] },
+  top: { p: [10, 820, 10.5], t: [10, 0, 10] }
 };
 let anim = null;
 function tweenTo(p, t, dur = 1300) {
