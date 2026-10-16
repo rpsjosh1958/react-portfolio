@@ -496,8 +496,8 @@ const OW = 5, AW = 1.2, PW = 6, PD = 2.4, SEAT = 0.5;   // well width, aisle wid
 const segLen = (u, r) => (Math.floor(((u % 4) + 4) % 4) % 2 ? Math.PI * r : 2 * A);   // metres per unit of u at radius r
 const onRow = (u, r, t = 0) => pp(u + t / segLen(u, r), r, A);   // point on radius r, offset t metres along it
 const facing = (u, r) => { const [x, z] = pp(u, r, A), [x2, z2] = pp(u + 0.001, r, A); return Math.atan2(-(z2 - z), x2 - x); };
-const placeAt = (u, r, t, y, w, h, d, m) => { const [x, z] = onRow(u, r, t), o = box(w, h, d, m, x, y, z, S); o.rotation.y = facing(u, r); return o; };
-const placePlane = (u, r, t, y, w, h, m, out = true) => { const [x, z] = onRow(u, r, t), p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); p.position.set(x, y, z); p.rotation.y = facing(u, r) + (out ? Math.PI : 0); S.add(p); return p; };
+const placeAt = (u, r, t, y, w, h, d, m) => { const [x, z] = onRow(u, r, t), o = box(w, h, d, m, x, y, z, S); o.rotation.y = facing(u + t / segLen(u, r), r); return o; };
+const placePlane = (u, r, t, y, w, h, m, out = true) => { const [x, z] = onRow(u, r, t), p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); p.position.set(x, y, z); p.rotation.y = facing(u + t / segLen(u, r), r) + (out ? Math.PI : 0); S.add(p); return p; };
 function vband(u0, u1, r, yb, yt, m, tile = 0, tileH = 0) {   // vertical strip at radius r; bottom and top may vary with u
   const cnt = Math.max(2, Math.ceil((u1 - u0) * 80)), pos = [], uv = [], idx = [], Y = (f, u) => typeof f === 'function' ? f(u) : f;
   let dist = 0, prev = null;
@@ -524,6 +524,7 @@ const roomMat = M('rooms', 0xffffff, { map: canvasTex(512, 96, (x) => {   // 12 
   x.fillStyle = '#f2f1ed'; x.fillRect(150, 8, 34, 86); x.fillStyle = '#b4b7b4'; for (let y = 12; y < 92; y += 7) x.fillRect(152, y, 30, 3);   // louvred vent
   x.fillStyle = '#56636c'; x.fillRect(430, 16, 32, 20); x.fillStyle = '#d6d9da'; x.fillRect(214, 24, 16, 10);   // window, sign
 }) });
+const SEAT_INDEX = [];   // [sector, seat number, row, seatPts index] for the curved and east stands
 const seatPts = [], colPts = [], postPts = [], outColPts = [], railPts = [], flagPts = [];
 // outside of the stands (site photos): striped cladding on an overhang above a colonnade at pitch level
 const SOFB = 3.6, RCB = RF - 3.2;   // colonnade soffit height; rooms' back wall
@@ -549,21 +550,23 @@ const roomsOutMat = M('roomsOut', 0xffffff, { side: DS, map: canvasTex(480, 144,
   x.fillStyle = '#fbfbf6'; x.fillRect(250, 40, 56, 6);   // strip light
   x.fillStyle = '#c0392b'; x.beginPath(); x.arc(160, 30, 5, 0, 7); x.fill();   // alarm bell
 }) });
-const washMat = M('washrooms', 0xffffff, { side: DS, map: canvasTex(576, 208, x => {   // gents, accessible, ladies, barred windows either side
-  x.fillStyle = '#efeee9'; x.fillRect(0, 0, 576, 208); x.fillStyle = '#8a9296'; x.fillRect(0, 112, 576, 96);
+const washMat = M('washrooms', 0xffffff, { side: DS, map: canvasTex(864, 208, x => {   // one unit, 10.8 m: plain wall, barred window, MEN, DISABLED, WOMEN doors, barred window, plain wall
+  x.fillStyle = '#efeee9'; x.fillRect(0, 0, 864, 208); x.fillStyle = '#8a9296'; x.fillRect(0, 112, 864, 96);
   const win = x0 => { x.fillStyle = '#fff'; x.fillRect(x0, 60, 76, 92); x.fillStyle = '#4f5b63'; x.fillRect(x0 + 5, 65, 66, 82); x.fillStyle = '#e9e9e4'; for (let i = x0 + 9; i < x0 + 70; i += 8) x.fillRect(i, 65, 3, 82); };
-  const head = (cx, cy) => { x.beginPath(); x.arc(cx, cy, 3, 0, 7); x.fill(); };
-  const door = (x0, icon) => {
-    x.fillStyle = '#f4f5f4'; x.fillRect(x0, 46, 76, 162); x.strokeStyle = '#c3c6c7'; x.lineWidth = 3; x.strokeRect(x0 + 5, 51, 66, 70);
-    x.fillStyle = '#cfd2d3'; for (let y = 130; y < 204; y += 7) x.fillRect(x0 + 5, y, 66, 3);
-    x.fillStyle = '#fff'; x.fillRect(x0 + 26, 58, 24, 30); x.fillStyle = '#222'; x.strokeStyle = '#222'; icon(x0 + 38, 64);
+  const line = (w, pts) => { x.lineWidth = w; x.beginPath(); pts.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); x.stroke(); };
+  const door = (x0, label, icon) => {
+    x.fillStyle = '#f4f5f4'; x.fillRect(x0, 40, 80, 168); x.strokeStyle = '#c3c6c7'; x.lineWidth = 3; x.strokeRect(x0 + 5, 45, 70, 72);
+    x.fillStyle = '#cfd2d3'; for (let y = 126; y < 204; y += 7) x.fillRect(x0 + 5, y, 70, 3);
+    x.fillStyle = '#fff'; x.fillRect(x0 + 18, 50, 44, 56); x.strokeStyle = '#333'; x.lineWidth = 1.5; x.strokeRect(x0 + 18, 50, 44, 56);   // sign
+    x.fillStyle = x.strokeStyle = '#1a1a1a'; x.lineCap = 'round'; icon(x0 + 40, 60);
+    x.fillStyle = '#c0392b'; x.font = 'bold 9px Arial, sans-serif'; x.textAlign = 'center'; x.fillText(label, x0 + 40, 102);
   };
-  win(28); win(472);
-  door(150, (cx, cy) => { head(cx, cy); x.fillRect(cx - 3, cy + 4, 6, 14); });
-  door(250, (cx, cy) => { head(cx - 2, cy); x.fillRect(cx - 4, cy + 4, 5, 8); x.lineWidth = 2; x.beginPath(); x.arc(cx + 2, cy + 15, 5, 0, 7); x.stroke(); });
-  door(350, (cx, cy) => { head(cx, cy); x.beginPath(); x.moveTo(cx, cy + 4); x.lineTo(cx - 6, cy + 17); x.lineTo(cx + 6, cy + 17); x.fill(); });
-  x.fillStyle = '#fbfbf6'; x.fillRect(236, 22, 104, 8);   // strip light
-  x.fillStyle = '#d9dcda'; x.fillRect(268, 4, 40, 14); x.fillStyle = '#2d7d46'; x.fillRect(272, 7, 32, 8);   // toilet sign
+  win(160); win(628);
+  door(290, 'MEN', (cx, cy) => { x.beginPath(); x.arc(cx, cy, 4.5, 0, 7); x.fill(); x.fillRect(cx - 6, cy + 6, 12, 13); line(4, [[cx - 3, cy + 18], [cx - 3, cy + 30]]); line(4, [[cx + 3, cy + 18], [cx + 3, cy + 30]]); });
+  door(384, 'DISABLED', (cx, cy) => { x.beginPath(); x.arc(cx - 4, cy, 4, 0, 7); x.fill(); line(4, [[cx - 4, cy + 6], [cx - 4, cy + 17], [cx + 6, cy + 17], [cx + 9, cy + 27]]); x.lineWidth = 2.5; x.beginPath(); x.arc(cx - 2, cy + 22, 8, 0, 7); x.stroke(); });
+  door(478, 'WOMEN', (cx, cy) => { x.beginPath(); x.arc(cx, cy, 4.5, 0, 7); x.fill(); x.beginPath(); x.moveTo(cx, cy + 6); x.lineTo(cx - 9, cy + 22); x.lineTo(cx + 9, cy + 22); x.fill(); line(3.5, [[cx - 3, cy + 22], [cx - 3, cy + 30]]); line(3.5, [[cx + 3, cy + 22], [cx + 3, cy + 30]]); });
+  x.fillStyle = '#fbfbf6'; x.fillRect(370, 18, 124, 8);   // strip light
+  x.fillStyle = '#d9dcda'; x.fillRect(402, 2, 60, 14); x.fillStyle = '#2d7d46'; x.fillRect(406, 5, 52, 8);   // toilet sign
 }) });
 const tileMat = M('tiledWall', 0xffffff, { side: DS, map: canvasTex(96, 96, x => {   // striped grey tiles, 2.4 m square
   ['#cfccc5', '#a9a6a0', '#d9d6cf', '#8f8c86'].forEach((c, i) => { x.fillStyle = c; x.fillRect(i * 24, 0, 24, 96); });
@@ -616,42 +619,53 @@ const bigDoorMat = M('bigDoor', 0xffffff, { side: DS, map: canvasTex(128, 112, (
 const darkPier = M('darkPier', 0x4f555b), steelRail = M('steelRail', 0xa9afb4, { metalness: 0.5, roughness: 0.4 }), hoseRed = M('hoseReel', 0xc8262b), chamberMat = M('chamber', 0x5f6b72, { side: DS }), doorWhite = M('doorWhite', 0xf2f2ef);
 const hydExtra = [];
 const keep = (u, zones) => !zones.some(([a, b]) => u > a && u < b);
+// seats laid out as on the seating plan (MAP-REAL-SEATING.pdf), read from its vector seat outlines: per row (front to back),
+// runs of [first, last, count, block], first/last being the outer seats' positions. Curved stands: positions as a fraction
+// of the half-circle from the grandstand end; blocks 0 end, 1 main, 2 tunnel, 3 main, 4 tunnel, 5 main, 6 tunnel, 7 main,
+// 8 end. East stand: positions as u along the stand from the north end; blocks 0 main, 1 tunnel, 2 and 3 main (either side
+// of an aisle), 4 tunnel, 5 main. The plan's drawn seats don't add up to its own labels (and the boards on site), so the
+// main blocks' rows are scaled to hold exactly the labelled counts; each numbered block runs from a tunnel's seats (or the
+// end block) through the main block after it, numbered row by row from the front, away from seat 1 — as the plan's arrows show.
+const PLAN_ROWS = {"north":[[[0.01805,0.23189,81,1],[0.26854,0.48253,82,3],[0.51835,0.73241,83,5],[0.76874,0.98262,83,7]],[[0.0179,0.23111,82,1],[0.26942,0.48268,83,3],[0.51822,0.73154,84,5],[0.76956,0.98268,84,7]],[[0.01782,0.23256,84,1],[0.26791,0.48278,85,3],[0.51822,0.73312,86,5],[0.76797,0.98282,86,7]],[[0.01767,0.23156,85,1],[0.24294,0.25779,7,2],[0.2689,0.48292,85,3],[0.51814,0.73209,87,5],[0.76896,0.98293,87,7]],[[0.00022,0.00786,4,0],[0.01761,0.23314,87,1],[0.24288,0.25751,7,2],[0.26736,0.48291,87,3],[0.49291,0.50769,7,4],[0.51803,0.73361,89,5],[0.74259,0.7585,8,6],[0.76752,0.9831,89,7],[0.99216,0.99888,4,8]],[[0.00015,0.0079,4,0],[0.01765,0.23223,87,1],[0.2428,0.2572,7,2],[0.26828,0.48296,88,3],[0.49301,0.50758,7,4],[0.51796,0.7327,90,5],[0.74243,0.75861,8,6],[0.76839,0.98319,89,7],[0.9922,0.9989,4,8]],[[0.00015,0.00779,4,0],[0.01751,0.23129,88,1],[0.24295,0.25725,7,2],[0.26923,0.4831,89,3],[0.49282,0.50776,7,4],[0.51777,0.73174,91,5],[0.74254,0.75849,8,6],[0.76933,0.98333,90,7],[0.99224,0.99906,4,8]],[[7e-05,0.00797,4,0],[0.01744,0.23273,90,1],[0.2431,0.25715,7,2],[0.26773,0.48312,91,3],[0.49278,0.50815,7,4],[0.51774,0.73315,93,5],[0.74267,0.75844,8,6],[0.76783,0.98334,92,7],[0.99234,0.99907,4,8]],[[7e-05,0.008,4,0],[0.01731,0.23182,91,1],[0.24225,0.2584,8,2],[0.26871,0.48328,92,3],[0.49287,0.50804,7,4],[0.51761,0.73224,94,5],[0.74249,0.75865,8,6],[0.76874,0.9835,93,7],[0.99231,0.99887,4,8]],[[0.00021,0.00803,4,0],[0.01715,0.23371,93,1],[0.24225,0.25816,8,2],[0.26678,0.48344,94,3],[0.49276,0.508,7,4],[0.51751,0.73418,96,5],[0.74242,0.75841,8,6],[0.76686,0.98351,95,7],[0.99186,0.99896,4,8]],[[0.00021,0.00789,4,0],[0.01709,0.23298,94,1],[0.24242,0.25816,8,2],[0.26755,0.48352,95,3],[0.49292,0.5079,7,4],[0.51738,0.73341,97,5],[0.74269,0.7584,8,6],[0.76763,0.98352,96,7],[0.99197,0.99897,4,8]]],"south":[[[0.01809,0.23183,86,1],[0.26854,0.48253,85,3],[0.51834,0.73238,85,5],[0.76874,0.9827,87,7]],[[0.01802,0.23108,87,1],[0.26944,0.48268,86,3],[0.51823,0.73152,86,5],[0.76959,0.98276,88,7]],[[0.01786,0.23259,89,1],[0.26788,0.48278,88,3],[0.51822,0.73312,88,5],[0.76799,0.98279,90,7]],[[0.01771,0.23156,90,1],[0.2424,0.25811,8,2],[0.2689,0.48292,89,3],[0.51814,0.73209,89,5],[0.76899,0.98289,91,7]],[[0.00022,0.00786,4,0],[0.01761,0.23317,92,1],[0.24291,0.25746,7,2],[0.26731,0.48291,91,3],[0.49168,0.50903,9,4],[0.51803,0.73364,91,5],[0.74193,0.75923,9,6],[0.76749,0.98299,93,7],[0.99216,0.99888,4,8]],[[0.00015,0.0079,4,0],[0.0175,0.23226,93,1],[0.24238,0.25806,8,2],[0.26828,0.48297,92,3],[0.49172,0.50894,9,4],[0.51795,0.73265,92,5],[0.74192,0.75913,9,6],[0.76842,0.98312,94,7],[0.99212,0.9989,4,8]],[[0.00015,0.00779,4,0],[0.0174,0.23129,94,1],[0.24236,0.25779,8,2],[0.26925,0.48309,93,3],[0.49166,0.50907,9,4],[0.51778,0.73172,93,5],[0.74185,0.75923,9,6],[0.76933,0.98322,95,7],[0.99209,0.99906,4,8]],[[7e-05,0.00782,4,0],[0.01734,0.23271,96,1],[0.24229,0.25814,8,2],[0.26777,0.48312,95,3],[0.49163,0.50909,9,4],[0.51774,0.7332,95,5],[0.74174,0.75926,9,6],[0.76783,0.9833,97,7],[0.99226,0.99907,4,8]],[[7e-05,0.00786,4,0],[0.0172,0.23184,97,1],[0.2423,0.2584,8,2],[0.26868,0.48328,96,3],[0.49164,0.50896,9,4],[0.51761,0.73228,96,5],[0.74177,0.75918,9,6],[0.76876,0.98346,99,7],[0.99231,0.9988,4,8]],[[0.00021,0.00789,4,0],[0.01718,0.23374,99,1],[0.24225,0.25814,8,2],[0.26678,0.48343,98,3],[0.49175,0.50898,9,4],[0.51751,0.73415,99,5],[0.74191,0.75923,9,6],[0.76686,0.98354,101,7],[0.99199,0.99896,4,8]],[[0.00021,0.00775,4,0],[0.01713,0.23298,100,1],[0.24245,0.25811,8,2],[0.26755,0.48352,100,3],[0.49187,0.50886,9,4],[0.51738,0.73344,100,5],[0.74206,0.75923,9,6],[0.76763,0.98362,102,7],[0.99211,0.99897,4,8]]],"east":[[[0.10244,0.21889,21,0],[0.30659,0.46743,29,2],[0.47944,0.64611,29,3],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.30659,0.46743,28,2],[0.47944,0.64611,29,3],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.30659,0.46743,28,2],[0.47944,0.64611,30,3],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.30659,0.46743,29,2],[0.47944,0.64611,30,3],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,28,2],[0.47944,0.64611,29,3],[0.67122,0.7127,8,4],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,28,2],[0.47944,0.64611,29,3],[0.67122,0.7127,8,4],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,28,2],[0.47944,0.64611,30,3],[0.67122,0.7127,8,4],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,29,2],[0.47944,0.64611,29,3],[0.67122,0.71252,8,4],[0.73781,0.86299,22,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,28,2],[0.47944,0.64611,29,3],[0.67122,0.71252,8,4],[0.73781,0.86299,21,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,28,2],[0.47944,0.64611,29,3],[0.67122,0.71252,8,4],[0.73781,0.86299,21,5]],[[0.10244,0.21889,21,0],[0.24181,0.28366,8,1],[0.30659,0.46743,29,2],[0.47944,0.64611,30,3],[0.67122,0.71252,8,4],[0.73781,0.86299,21,5]]]};
 // u0..u1: extent; voms: tunnel centres; blocks (straight stands only): [seats per row, total or 0 for a tunnel block] in
 // order along the stand, laid out at SEAT pitch with AW aisles. Without blocks, rows are continuous apart from the aisles
 // either side of each tunnel and at the ends.
-function stand(u0, u1, voms, backMat, blocks, sector, rev, known) {   // sector letter for the boards; rev numbers from the u1 end; known: real block ranges
+function stand(u0, u1, voms, backMat, blocks, sector, rev, known, plan) {   // sector letter for the boards; rev numbers from the u1 end; known: real block ranges
+  // plan (curved stands): { rows, toU, depth: rows of seats each main tunnel's well cuts through, ends: small tunnels at the ends }
   const prof = [[R0, YF], [SR0, YF]];
   for (let k = 0; k < SROWS; k++) prof.push([srowR(k + 1), YF + k * SRISE], [srowR(k + 1), YF + (k + 1) * SRISE]);
-  const rear = [[srowR(4), 2.6], ...prof.slice(9)], cheek = [[SR0, 0], ...prof.slice(1, 9), [srowR(4), 0]];
-  const rMid = (SR0 + srowR(4)) / 2, hu = uc => (OW / 2) / segLen(uc, rMid), pu = uc => (PW / 2) / segLen(uc, R0);
+  const rear = d => [[srowR(d), 2.6], ...prof.slice(2 * d + 1)], cheek = d => [[SR0, 0], ...prof.slice(1, 2 * d + 1), [srowR(d), 0]];
+  const rMid = (SR0 + srowR(4)) / 2, hu = (uc, w = OW) => (w / 2) / segLen(uc, rMid), pu = (uc, w = PW) => (w / 2) / segLen(uc, R0);
+  // every tunnel: main ones, and on the curved stands a small one at each end (well under the end block, narrower platform)
+  const tun = [...voms.map((uc, i) => ({ uc, d: plan ? plan.depth[i] : 4, w: OW, pw: PW })), ...(plan ? plan.ends.map(uc => ({ uc, d: 4, w: 2.0, pw: 2.6 })) : [])].sort((a, b) => a.uc - b.uc);
   const steps = (a, b, p) => { if (b > a + 1e-6) mesh(shadeSteps(band(a, b, p, A), 0xc3c6c8, 0xa2a7ab), mat.seat, S); };
   let u = u0;
-  voms.forEach(uc => {
-    const h = hu(uc);
+  tun.forEach(({ uc, d, w, pw }) => {
+    const h = hu(uc, w), rd = srowR(d);
     steps(u, uc - h, prof);
     mesh(band(uc - h, uc + h, prof.slice(0, 2), A), mat.concrete, S);   // front walkway runs past the opening
-    steps(uc - h, uc + h, rear);
-    [uc - h, uc + h].forEach(e => cap(e, cheek, A, mat.white, S));
+    steps(uc - h, uc + h, rear(d));
+    [uc - h, uc + h].forEach(e => cap(e, cheek(d), A, mat.white, S));
     // a passage from the colonnade outside runs in under the seats to the foot of a flight that climbs to the front walkway
-    const n = 11, run = (srowR(4) - SR0) / n, drop = YF / n;
-    for (let i = 0; i < n; i++) { const top = YF - i * drop; placeAt(uc, SR0 + (i + 0.5) * run, 0, top / 2, OW - 0.12, top, run + 0.02, mat.concrete); }
-    [-1, 1].forEach(s => placeAt(uc, (srowR(4) + RCB) / 2, s * (OW / 2 + 0.12), 1.3, 0.24, 2.6, RCB - srowR(4), mat.white));
-    placeAt(uc, (srowR(4) + RCB) / 2, 0, 2.7, OW + 0.48, 0.2, RCB - srowR(4), mat.white);
+    const n = 11, run = (rd - SR0) / n, drop = YF / n;
+    for (let i = 0; i < n; i++) { const top = YF - i * drop; placeAt(uc, SR0 + (i + 0.5) * run, 0, top / 2, w - 0.12, top, run + 0.02, mat.concrete); }
+    [-1, 1].forEach(s => placeAt(uc, (rd + RCB) / 2, s * (w / 2 + 0.12), 1.3, 0.24, 2.6, RCB - rd, mat.white));
+    placeAt(uc, (rd + RCB) / 2, 0, 2.7, w + 0.48, 0.2, RCB - rd, mat.white);
     // white rails along both sides of the well and across the back
     const P3 = (uu, r, y) => { const [x, z] = pp(uu, r, A); return [x, y, z]; };
-    [-1, 1].forEach(s => [1.0, 0.55].forEach(y => bar3(P3(uc + s * h, SR0, YF + y), P3(uc + s * h, srowR(4), YF + 3 * SRISE + y), 0.06, mat.white)));
-    bar3(P3(uc - h, srowR(4) + 0.05, YF + 4 * SRISE + 1), P3(uc + h, srowR(4) + 0.05, YF + 4 * SRISE + 1), 0.06, mat.white);
+    [-1, 1].forEach(s => [1.0, 0.55].forEach(y => bar3(P3(uc + s * h, SR0, YF + y), P3(uc + s * h, rd, YF + (d - 1) * SRISE + y), 0.06, mat.white)));
+    bar3(P3(uc - h, rd + 0.05, YF + d * SRISE + 1), P3(uc + h, rd + 0.05, YF + d * SRISE + 1), 0.06, mat.white);
     // platform over the pitch
-    placeAt(uc, R0 - PD / 2, SOFF + 0.45, PW, 0.9, PD, fasciaMat);
-    [[-1, R0 - PD + 0.25], [1, R0 - PD + 0.25], [-1, R0 + 0.3], [1, R0 + 0.3]].forEach(([s, r]) => placeAt(uc, r, s * (PW / 2 - 0.3), SOFF / 2, 0.45, SOFF, 0.45, colGrey));
-    placeAt(uc, R0 - PD + 0.03, 0, YF + 0.55, PW, 1.05, 0.04, standGlass).castShadow = false;
-    [-1, 1].forEach(s => { placeAt(uc, R0 - PD / 2, s * (PW / 2 - 0.03), YF + 0.55, 0.04, 1.05, PD, standGlass).castShadow = false; });
-    [[-1, R0 - PD], [1, R0 - PD], [-1, R0 - PD / 2], [1, R0 - PD / 2]].forEach(([s, r]) => placeAt(uc, r, s * (PW / 2 - 0.05), YF + 0.1, 0.08, 1.9, 0.08, standPost));
+    placeAt(uc, R0 - PD / 2, SOFF + 0.45, pw, 0.9, PD, fasciaMat);
+    [[-1, R0 - PD + 0.25], [1, R0 - PD + 0.25], [-1, R0 + 0.3], [1, R0 + 0.3]].forEach(([s, r]) => placeAt(uc, r, s * (pw / 2 - 0.3), SOFF / 2, 0.45, SOFF, 0.45, colGrey));
+    placeAt(uc, R0 - PD + 0.03, 0, YF + 0.55, pw, 1.05, 0.04, standGlass).castShadow = false;
+    [-1, 1].forEach(s => { placeAt(uc, R0 - PD / 2, s * (pw / 2 - 0.03), YF + 0.55, 0.04, 1.05, PD, standGlass).castShadow = false; });
+    [[-1, R0 - PD], [1, R0 - PD], [-1, R0 - PD / 2], [1, R0 - PD / 2]].forEach(([s, r]) => placeAt(uc, r, s * (pw / 2 - 0.05), YF + 0.1, 0.08, 1.9, 0.08, standPost));
     u = uc + h;
   });
   steps(u, u1, prof);
   // under the deck: soffit, fascia, rooms set back behind the columns; glass along the front except at the platforms
-  const plat = voms.map(uc => [uc - pu(uc), uc + pu(uc)]);
+  const plat = tun.map(t => [t.uc - pu(t.uc, t.pw), t.uc + pu(t.uc, t.pw)]);
   mesh(band(u0, u1, [[R0, SOFF], [RW, SOFF]], A), fasciaMat, S);
   mesh(band(u0, u1, [[R0, SOFF], [R0, YF]], A), fasciaMat, S);
   mesh(band(u0, u1, [[RW, 0], [RW, SOFF]], A, { tile: 12 }), roomMat, S);
@@ -670,6 +684,10 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known) {   // sector 
   // east stand: by each tunnel, a stair from the colonnade down to a chamber under it, entered from the road through an
   // opening in the tiled base (site photos); on the side towards the middle of the stand
   const tP = OW / 2 + 0.24, FL = LOWR + 0.3, tU = t => t / (2 * A);
+  // curved stands: which way (+1 / -1 along u) each main tunnel's washroom unit sits from its entrance
+  const away = plan ? Math.sign(plan.toU(1) - plan.toU(0)) : 1, gEnd = plan ? plan.toU(0) : u0;
+  const nearest = voms.reduce((b, uc) => Math.abs(uc - gEnd) < Math.abs(b - gEnd) ? uc : b, voms[0]);
+  const wcSide = voms.map(uc => uc === nearest ? away : -away);
   const EF = blocks ? voms.map(uc => ({ uc, dir: uc < (u0 + u1) / 2 ? 1 : -1 })) : [];
   const urange = (f, a, b) => [f.uc + tU(f.dir * a), f.uc + tU(f.dir * b)].sort((p, q) => p - q);
   const holeR = EF.map(f => urange(f, tP + 0.6, tP + 4.8)), openR = EF.map(f => urange(f, tP + 3.2, tP + 7.6));
@@ -696,9 +714,9 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known) {   // sector 
     placePlane(uc, RF + 0.36, T(tP + 8.3), LOWR + 1.75, 0.42, 0.66, sectorSign);
     { const [x, z] = onRow(uc, RF + 0.8, T(tP + 8.95)); hydExtra.push([x, z, ringY(uc)]); }
   });
-  const openU = uc => (OW / 2 + 0.24) / segLen(uc, RCB);
+  const openU = (uc, w = OW) => (w / 2 + 0.24) / segLen(uc, RCB);
   let w0 = u0;
-  [...voms.map(uc => [uc - openU(uc), uc + openU(uc)]), [u1, u1]].forEach(([a, b]) => { if (a > w0) vband(w0, a, RCB, 0, SOFB, roomsOutMat, 12); if (b > a) vband(a, b, RCB, 2.6, SOFB, mat.white); w0 = b; });
+  [...tun.map(t => [t.uc - openU(t.uc, t.w), t.uc + openU(t.uc, t.w)]), [u1, u1]].forEach(([a, b]) => { if (a > w0) vband(w0, a, RCB, 0, SOFB, roomsOutMat, 12); if (b > a) vband(a, b, RCB, 2.6, SOFB, mat.white); w0 = b; });
   if (blocks) {
     // north end of the base: an open bay (stores) with louvred vents inside, a pair of large grey doors, a hydrant between
     const bu = u0 + tU(6.0), bw = 6.0, cw = RF + 0.33 - RCB, cr = (RCB + RF + 0.33) / 2, ch = 0.05 - (LOWR + 0.15);
@@ -731,16 +749,33 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known) {   // sector 
       placeAt(uc, RCB + 0.1, -dir * (tP + 1.5), 0.48, 0.07, 0.95, 0.07, hoseRed);
     });
   } else {
-    // a set of washrooms (gents, accessible, ladies) between each pair of tunnels, with a recycling bin beside it
-    const stops = [u0, ...voms, u1];
-    stops.slice(1).forEach((b, i) => { const v = (stops[i] + b) / 2; placePlane(v, RCB + 0.03, 0, 1.3, 7.2, 2.6, washMat); placeAt(v, RCB + 0.55, 4.6, 0.56, 0.75, 1.0, 0.65, binGreen); });
+    // a washroom unit (gents, accessible, ladies) beside each main tunnel's entrance: just past it at the tunnel nearest the
+    // grandstand, just before it at the other two (site photos); a recycling bin beside each
+    wcSide.forEach((w, i) => {
+      const uc = voms[i], c = w * (tP + 0.55 + 5.4);
+      placePlane(uc, RCB + 0.05, c, 1.3, 10.8, 2.6, washMat);   // covers the wall's own room doors either side, so the unit reads as just its three doors
+      placeAt(uc, RCB + 0.55, c + w * 6.0, 0.56, 0.75, 1.0, 0.65, binGreen);
+    });
   }
   const capProf = [[RW, 0], [RW, SOFF], [R0, SOFF], ...prof, [RF, H1], [RF, SOFB], [RCB, SOFB], [RCB, 0]];
   cap(u0, capProf, A, mat.white, S); cap(u1, capProf, A, mat.white, S);
   // seats
-  const us = [], add = (v, k, rs) => { const [x, z] = pp(v, rs, A); seatPts.push([x, YF + k * SRISE + 0.21, z, facing(v, rs)]); us.push(v); };
+  const us = [], add = (v, k, rs) => { const [x, z] = pp(v, rs, A); seatPts.push([x, YF + k * SRISE + 0.21, z, facing(v, rs)]); us.push(v); return seatPts.length - 1; };
   const counts = [];
-  if (blocks) {
+  if (plan) {
+    // as drawn on the seating plan: each run's seats evenly spaced between its outer seats, at the same angle round the
+    // stand, on our rows
+    // numbered block by block (plan.groups), row by row from the front, each row running away from seat 1
+    plan.groups.forEach((g, gi) => {
+      let no = known[gi][0];
+      plan.rows.forEach((row, k) => row.filter(r => g.includes(r[3])).sort((a, b) => a[0] - b[0]).forEach(([f0, f1, n]) => {
+        const rs = srowR(k) + 0.6;
+        for (let i = 0; i < n; i++) SEAT_INDEX.push([sector, no++, k + 1, add(plan.toU(n > 1 ? f0 + (f1 - f0) * i / (n - 1) : f0), k, rs)]);
+      }));
+      console.assert(no - 1 === known[gi][1], `sector ${sector} block ${gi + 1} ends at ${no - 1}, not ${known[gi][1]}`);
+      counts.push(no - known[gi][0]);
+    });
+  } else if (blocks) {
     const L = (u1 - u0) * 2 * A, used = blocks.reduce((s, [n]) => s + n * SEAT, 0) + (blocks.length - 1) * AW;
     let s = (L - used) / 2;
     blocks.forEach(([n, total]) => {
@@ -782,27 +817,28 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known) {   // sector 
   voms.forEach((uc, i) => [[-1, i], [1, i + 1]].forEach(([s, bi]) => {
     placeAt(uc, RCB + 0.25, s * (tP + 0.35), (0.06 + SOFB) / 2, 0.4, SOFB - 0.06, 0.5, darkPier);
     placePlane(uc, RCB + 0.51, s * (tP + 0.35), 1.75, 0.36, 0.3, boardMat(sector, ...rng[bi]));
-    placePlane(uc, RCB + 0.51, s * (tP + 0.35), 1.4, 0.36, 0.22, s > 0 ? washL : washR);
+    placePlane(uc, RCB + 0.51, s * (tP + 0.35), 1.4, 0.36, 0.22, wcSide[i] > 0 ? washL : washR);   // arrow towards this tunnel's washrooms
   }));
   return counts;
 }
-// east stand, per the seating plan (1217 numbered seats): 231 | tunnel | 691 | tunnel | 295, tunnels with 7 rows of 10 behind
-const EAST_BLOCKS = [[21, 231], [10, 0], [63, 691], [10, 0], [27, 295]];
-const eastVoms = (() => {
-  const u0 = 0.075, u1 = 0.925, L = (u1 - u0) * 2 * A, used = EAST_BLOCKS.reduce((s, [n]) => s + n * SEAT, 0) + (EAST_BLOCKS.length - 1) * AW, out = [];
-  let s = (L - used) / 2;
-  EAST_BLOCKS.forEach(([n, total]) => { if (!total) out.push(u0 + (s + n * SEAT / 2) / (2 * A)); s += n * SEAT + AW; });
-  return out;
-})();
+// east stand: numbered blocks 1–231, 232–922, 923–1217 (the plan's labels and the boards on site); tunnels where the plan
+// draws them, each with 7 rows of 8 behind
+const EAST_BLOCKS = [[0, 231], [0, 0], [0, 691], [0, 0], [0, 295]];   // board totals; the seats come from PLAN_ROWS.east
+const eastVoms = [0.26274, 0.69196];
 const SEAT_COUNTS = {
-  east: stand(0.075, 0.925, eastVoms, claddingMat, EAST_BLOCKS, 'B'),       // sector B, free-standing, gaps either end
-  south: stand(0.995, 2.005, [1.25, 1.5, 1.75], claddingMat, null, 'C', true, [[1, 1051], [1052, 2127], [2128, 3204]]),  // sector C, numbered from the grandstand end
-  north: stand(2.995, 4.005, [3.25, 3.5, 3.75], claddingMat, null, 'A', false, [[1, 990], [991, 2020], [2021, 3059]])  // sector A, numbered from the grandstand end
+  east: stand(0.075, 0.925, eastVoms, claddingMat, EAST_BLOCKS, 'B', false, [[1, 231], [232, 922], [923, 1217]],
+    { rows: PLAN_ROWS.east, toU: f => f, depth: [4, 4], ends: [], groups: [[0], [1, 2, 3], [4, 5]] }),   // sector B, free-standing, gaps either end
+  // curved stands: seats laid out as on the plan; the tunnel nearest the grandstand cuts 3 rows, the others 4. Numbered
+  // blocks and board ranges from the plan's labels (and the boards on site), numbered from the grandstand end
+  south: stand(0.995, 2.005, [1.25, 1.5, 1.75], claddingMat, null, 'C', true, [[1, 1051], [1052, 2127], [2128, 3204], [3205, 4332]],
+    { rows: PLAN_ROWS.south, toU: f => 2 - f, depth: [4, 4, 3], ends: [2 - 0.00397, 2 - 0.99544], groups: [[0, 1], [2, 3], [4, 5], [6, 7, 8]] }),   // sector C
+  north: stand(2.995, 4.005, [3.25, 3.5, 3.75], claddingMat, null, 'A', false, [[1, 990], [991, 2020], [2021, 3059], [3060, 4127]],
+    { rows: PLAN_ROWS.north, toU: f => 3 + f, depth: [3, 4, 4], ends: [3 + 0.00397, 3 + 0.99544], groups: [[0, 1], [2, 3], [4, 5], [6, 7, 8]] })    // sector A
 };
 {
   const o = new THREE.Object3D();
   const inst = (geo, m, pts, set) => { const im = new THREE.InstancedMesh(geo, m, pts.length); pts.forEach((p, i) => { set(o, p); o.updateMatrix(); im.setMatrixAt(i, o.matrix); }); im.castShadow = im.receiveShadow = true; S.add(im); };
-  inst(new THREE.BoxGeometry(0.46, 0.42, 0.42), M('seatGreen', 0x2f7d63), seatPts, (o, [x, y, z, r]) => { o.position.set(x, y, z); o.rotation.set(0, r, 0); });
+  inst(new THREE.BoxGeometry(0.42, 0.42, 0.42), M('seatGreen', 0x2f7d63), seatPts, (o, [x, y, z, r]) => { o.position.set(x, y, z); o.rotation.set(0, r, 0); });
   inst(new THREE.BoxGeometry(0.45, SOFF, 0.45), colGrey, colPts, (o, [x, z]) => { o.position.set(x, SOFF / 2, z); o.rotation.set(0, 0, 0); });
   inst(new THREE.BoxGeometry(0.08, 1.9, 0.08), standPost, postPts, (o, [x, z, r]) => { o.position.set(x, YF + 0.1, z); o.rotation.set(0, r, 0); });
   // outside: colonnade columns with number plates, rail posts on the raised walkway, flagpoles along the top of the cladding
@@ -1229,43 +1265,68 @@ const SEAT_COUNTS = {
     const o = box(w, h, d, m, x, y, z, S); o.rotation.y = Math.atan2(-(z2 - z), x2 - x); return o;
   };
   const path = (u, r0, r1, w = 3, y = 0.11) => { const [a0, b0] = pp(u, r0, A), [a1, b1] = pp(u, r1, A); roadSeg(a0, b0, a1, b1, w, mat.concrete, y, 10, S); };
-  // gaps either end of the east stand, which is a section of its own (site photos): from the road, two flights climb side
-  // by side, split by a dividing wall with the sector sign, to the level of the colonnades behind the stands. At the top
-  // each turns out onto its stand's colonnade; ahead, a landing at pitch level runs in to a wall across the front of the gap
-  // with a barred gate onto the field. Tiled cheek walls, guarded where they drop beside the flights.
+  // gaps either end of the east stand, which is a section of its own (site photos): a dividing wall with the sector sign
+  // splits the gap, and each half has a switchback stair from the road up to its own stand's colonnade — a flight beside the
+  // dividing wall climbs in from the road to a landing, a second flight beside the stand climbs back out, and at the top you
+  // turn back onto the colonnade. The curved stand's side is on the left, the east stand's on the right, seen from the road.
+  // All of it sits inside the gap, behind the line of the stands' bases: from the road you walk in on the level for a few
+  // metres before the first flight. Past the stairs the dividing wall runs on a little, and the gate wall crosses the gap
+  // part-way to the pitch.
+  // Inside, past the stairs, the ground between the stands' ends runs to a wall across the front with a barred gate onto the
+  // field. Walls in striped grey tiles.
   const stripeTex = canvasTex(64, 16, x => [['#d3d0c9', 0], ['#b1aea8', 16], ['#d3d0c9', 32], ['#9d9a94', 48]].forEach(([c, x0]) => { x.fillStyle = c; x.fillRect(x0, 0, 16, 16); }));
   const tiles = rep => { const t = stripeTex.clone(); t.needsUpdate = true; t.repeat.set(rep, rep); return M('tiles', 0xffffff, { map: t, side: DS }); };
   const steelPipe = M('pipe', 0xa9afb4, { metalness: 0.5, roughness: 0.4 });
-  const GW = (0.995 - 0.925) * 2 * A, yR = LOWR, yF = LOWR + 0.15, n1 = 16, tr = 0.27, rB = RR - 3.65, rT = rB - n1 * tr, hw = GW / 2 - 0.27, rise = (0.05 - yF) / n1;
+  const GW = (0.995 - 0.925) * 2 * A, yR = LOWR, yF = LOWR + 0.15, yT = 0.05, yM = (yF + yT) / 2, NS = 8, TR = 0.25;
+  // radii: road edge, line of the stands' bases, foot of the first flight, its top, the landing's inner edge, top of the second
+  const rRd = RR - 3.65, rE = RF + 0.33, r1 = rE - 3.0, r2 = r1 - NS * TR, rL = r2 - 1.35, r3 = rL + NS * TR;
+  const rD = rL - 2.5, rG = rD - 3.5;   // end of the dividing wall, the wall with the gate
+  const LA = 1.25, LB = GW / 2 - 0.12 - 0.15 - LA - 0.15;   // lane widths: first flight (by the dividing wall), second flight (by the stand)
+  const tA = 0.15 + LA / 2, tS = 0.15 + LA + 0.075, tB = 0.15 + LA + 0.15 + LB / 2, tC = GW / 2 - 0.06;   // lane / wall centres from the gap's middle
+  const laneB = r => r <= rL ? yM : r < r3 ? yM + (yT - yM) * (r - rL) / (r3 - rL) : yT;   // height of the second lane
   const extr = (prof, x0, depth, m) => {
     const g = new THREE.ExtrudeGeometry(new THREE.Shape(prof.map(([r, y]) => new THREE.Vector2(r, y))), { depth, bevelEnabled: false }).rotateY(Math.PI / 2);
     const o = new THREE.Mesh(g, m); o.position.x = x0; o.castShadow = o.receiveShadow = true; S.add(o);
   };
   [0.04, 0.96].forEach(ug => {
     const gx = -A + 2 * A * ug, P = (r, t, y) => { const [x, z] = onRow(ug, r, t); return [x, y, z]; };
-    floorHoles.push([gx - GW / 2, -74.97, gx + GW / 2, -(rT + 0.02)]);
-    for (let i = 0; i < n1; i++) { const top = 0.05 - i * rise; [-1, 1].forEach(s => placeAt(ug, rT + (i + 0.5) * tr, s * (0.15 + hw / 2), (top + yR) / 2, hw - 0.02, top - yR, tr + 0.02, mat.concrete)); }
-    // dividing wall, tall at the road end, stepping down to handrail height at the landing
-    extr([[rT, yR], [rT, 1.1], [rB - 1.3, yF + 2.4], [rB, yF + 2.4], [rB, yR]], gx - 0.15, 0.3, tiles(1 / 2.4));
-    placePlane(ug, rB + 0.02, 0, yF + 1.5, 0.42, 0.74, sectorSign);
+    floorHoles.push([gx - GW / 2, -74.97, gx + GW / 2, -rL]);
+    // level apron from the road into the gap, running on between the walls to the first flight
+    placeAt(ug, (rE + rRd) / 2, 0, (yF + yR) / 2 + 0.01, GW, yF - yR, rRd - rE, mat.concrete);
+    [-1, 1].forEach(s => placeAt(ug, (r1 + rE) / 2, s * tA, (yF + yR) / 2 + 0.01, LA, yF - yR, rE - r1, mat.concrete));
+    // dividing wall, its end in line with the stands' bases, carrying the sector sign; it runs on past the stairs
+    extr([[rD, yT], [rD, yT + 1.2], [rL, yT + 1.2], [r1, yF + 2.4], [rE, yF + 2.4], [rE, yR], [rL, yR], [rL, yT]], gx - 0.15, 0.3, tiles(1 / 2.4));
+    placePlane(ug, rE + 0.02, 0, yF + 1.5, 0.42, 0.74, sectorSign);
     [-1, 1].forEach(s => {
-      // cheek wall: flush with the colonnade alongside the upper flight, sloping down outside the stand
-      extr([[rT, yR], [rT, 0.06], [RF + 0.35, 0.06], [rB, yF + 0.9], [rB, yR]], gx + s * (GW / 2 - 0.06) - 0.06, 0.12, tiles(1 / 2.4));
-      const tc = s * (GW / 2 - 0.06);
-      bar3(P(rT, tc, 1.06), P(RF + 0.35, tc, 1.06), 0.06, steelPipe);   // guard along the colonnade's end
-      bar3(P(RF + 0.35, tc, 1.06), P(rB, tc, yF + 1.8), 0.06, steelPipe);
-      [rT + 0.1, (rT + RF) / 2, RF + 0.3].forEach(r => placeAt(ug, r, tc, 0.56, 0.06, 1.0, 0.06, steelPipe));
-      [s * (GW / 2 - 0.2), s * 0.3].forEach(t => bar3(P(rB, t, yF + 0.95), P(rT, t, 1.0), 0.05, steelPipe));   // handrails up the flight
-      placeAt(ug, RCB - 1.5, s * (GW / 2 - 0.13), 1.05, 0.04, 2.1, 1.0, doorWhite);   // door into the rooms off the landing
+      const rise1 = (yM - yF) / NS, rise2 = (yT - yM) / NS;
+      for (let i = 0; i < NS; i++) { const top = yF + (i + 1) * rise1; placeAt(ug, r1 - (i + 0.5) * TR, s * tA, (top + yR) / 2, LA, top - yR, TR + 0.02, mat.concrete); }   // first flight, climbing in
+      placeAt(ug, (rL + r2) / 2, s * (0.15 + (GW / 2 - 0.27) / 2), (yM + yR) / 2, GW / 2 - 0.27, yM - yR, r2 - rL, mat.concrete);   // landing across both lanes
+      for (let i = 0; i < NS; i++) { const top = yM + (i + 1) * rise2; placeAt(ug, rL + (i + 0.5) * TR, s * tB, (top + yR) / 2, LB, top - yR, TR + 0.02, mat.concrete); }   // second flight, climbing back out
+      placeAt(ug, (r3 + rE) / 2, s * tB, (yT + yR) / 2, LB, yT - yR, rE - r3, mat.concrete);   // top landing, beside the colonnade's end
+      placeAt(ug, rE - 0.02, s * tB, (yT + yR) / 2, LB + 0.2, yT - yR, 0.04, tiles(0.6));      // its face to the road, flush with the stands' bases
+      // wall between the lanes: the second lane's side, with a rail on top
+      extr([[r2, yR], [r2, laneB(r2)], [r3, yT], [rE, yT], [rE, yR]], gx + s * tS - 0.075, 0.15, tiles(1 / 2.4));
+      // the stand's side: tiled wall up to the colonnade
+      extr([[rL, yR], [rL, 0.06], [rE, 0.06], [rE, yR]], gx + s * tC - 0.06, 0.12, tiles(1 / 2.4));
+      // inner edge of the landing: retaining wall up to the ground inside, with a rail
+      placeAt(ug, rL - 0.05, s * (0.15 + (GW / 2 - 0.27) / 2), (yR + yT) / 2, GW / 2 - 0.27, yT - yR, 0.1, tiles(0.6));
+      bar3(P(rL - 0.05, s * 0.3, yT + 1.0), P(rL - 0.05, s * (GW / 2 - 0.12), yT + 1.0), 0.06, steelPipe);
+      // rails on the wall between the lanes, and handrails up both flights; the top landing runs alongside the colonnade's
+      // end, open to it
+      bar3(P(r2, s * tS, laneB(r2) + 1.0), P(r3, s * tS, yT + 1.0), 0.06, steelPipe);
+      bar3(P(r3, s * tS, yT + 1.0), P(rE, s * tS, yT + 1.0), 0.06, steelPipe);
+      bar3(P(r1, s * 0.22, yF + 0.9), P(r2, s * 0.22, yM + 0.9), 0.05, steelPipe);   // handrails
+      bar3(P(rL, s * (tB + LB / 2 - 0.08), yM + 0.9), P(r3, s * (tB + LB / 2 - 0.08), yT + 0.9), 0.05, steelPipe);
+      placeAt(ug, rL - 1.3, s * (GW / 2 - 0.13), 1.1, 0.04, 2.1, 1.0, doorWhite);   // door into the rooms, inside
       placeAt(ug, RF + 0.36, s * (GW / 2 + 1.4), yF + 1.05, 1.0, 2.1, 0.04, doorWhite);   // door in the stand's base, off the road
     });
-    // front wall with the gate onto the field
+    // wall across the gap with the gate through to the field
     [[-GW / 2, -1.3], [1.3, GW / 2]].forEach(([a, c]) => {
-      placeAt(ug, R0 - 0.3, (a + c) / 2, 1.2, c - a, 2.4, 0.3, tiles((c - a) / 2.4));
-      placeAt(ug, R0 - 0.3, (a + c) / 2, 2.45, c - a + 0.04, 0.1, 0.4, mat.white);   // coping
+      placeAt(ug, rG, (a + c) / 2, 1.2, c - a, 2.4, 0.3, tiles((c - a) / 2.4));
+      placeAt(ug, rG, (a + c) / 2, 2.45, c - a + 0.04, 0.1, 0.4, mat.white);   // coping
     });
-    const gate = placeAt(ug, R0 - 0.3, 0, 1.15, 2.6, 2.2, 0.02, fenceMat); gate.geometry = new THREE.PlaneGeometry(2.6, 2.2);
-    [-1.3, 1.3].forEach(t => placeAt(ug, R0 - 0.3, t, 1.25, 0.12, 2.5, 0.12, steelPipe));
+    const gate = placeAt(ug, rG, 0, 1.15, 2.6, 2.2, 0.02, fenceMat); gate.geometry = new THREE.PlaneGeometry(2.6, 2.2);
+    [-1.3, 1.3].forEach(t => placeAt(ug, rG, t, 1.25, 0.12, 2.5, 0.12, steelPipe));
   });
   // bowl floor, open where the gap stairs and the east stand's inner stairs go down
   { const bf = shapeFrom(stadPts(A, RF)); floorHoles.forEach(([x0, z0, x1, z1]) => bf.holes.push(new THREE.Path(rectPts(x0, z0, x1, z1).map(([x, z]) => new THREE.Vector2(x, -z))))); flat(bf, mat.concrete, 0.05, S); }
