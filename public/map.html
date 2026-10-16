@@ -86,7 +86,7 @@
   <button class="tx" id="pClear">Clear all</button>
   <button class="tx" id="pDone">Done</button>
 </div>
-<div id="hint">Drag to orbit · Right-drag to pan · Scroll to zoom</div>
+<div id="hint">Drag to orbit · Right-drag to pan · Scroll to zoom · Double-click to pivot there · Arrows / WASD to move</div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -107,12 +107,13 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 800, 1700);
 
-const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 1, 5000);
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 5000);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.maxPolarAngle = 1.4;
-controls.minDistance = 50;
+controls.maxPolarAngle = 1.55;   // down to near eye level
+controls.minDistance = 2;        // close enough to walk the concourses
+controls.zoomToCursor = true;    // scroll zooms towards what's under the pointer
 controls.maxDistance = 1300;
 controls.screenSpacePanning = false;
 controls.autoRotateSpeed = 0.6;
@@ -254,7 +255,7 @@ const roadMat = M('road', 0xffffff, { map: canvasTex(128, 128, (x) => {
 const K = 0.3, CX = 882, CY = 727;
 const sat = (px, py) => [(px - CX) * K, (py - CY) * K];
 const satPoly = pts => pts.map(p => sat(...p));
-const EARTH = satPoly([[700, 1195], [1630, 1185], [1700, 1230], [1700, 1300], [1180, 1290], [1100, 1262], [700, 1268]]);
+const EARTH = [[-54.6, 139.6], [-42.1, 139.6], [-36.4, 129.9], [218.9, 129.9], ...satPoly([[1630, 1185], [1700, 1230], [1700, 1300], [1180, 1290], [1100, 1262], [700, 1268]])];   // up to the boundary wall
 flat(shapeFrom(EARTH), mat.earth, 0.02);
 
 // ---------- athletics track + pitch
@@ -356,16 +357,31 @@ flat(stadShape(A, R0 - 0.7), mat.grass, 0.09, S);   // paving under the stands' 
 // The ring between the wall and the stands is grey paving, with a tarmac service road running through it.
 // octagon kept a fixed distance outside the service road: sides at x ±WD, ends WD beyond the curve centres, 45° corners
 const RR = 81, WD = RR + 6.5;   // service road centreline radius; wall offset = half the road + 3 m verge
+// distance from a world point out to the ring road's outer edge, and the point on that edge nearest it
+const roadEdge = (xw, zw, R = RR + 3.5) => {
+  const x = zw, z = -xw;   // stadium-local
+  let q;
+  if (Math.abs(x) <= A) q = [x, Math.sign(z) * R];
+  else { const cx = Math.sign(x) * A, k = R / Math.hypot(x - cx, z); q = [cx + (x - cx) * k, z * k]; }
+  const r = Math.abs(x) <= A ? Math.abs(z) : Math.hypot(Math.abs(x) - A, z);
+  return { gap: r - R, pt: toW(q) };
+};
 const c45 = WD * Math.tan(Math.PI / 8);
 const [o0, o1, o2, o3, o4, o5, o6, o7] = [[-c45, -A - WD], [c45, -A - WD], [WD, -A - c45], [WD, A + c45], [c45, A + WD], [-c45, A + WD], [-WD, A + c45], [-WD, -A - c45]];
 const GS = [[o6[0], 32], [-ZR - 0.4, 32], [-ZR - 0.4, -32], [o7[0], -32]];   // notch round the grandstand's back
 const OCT = [o0, o1, o2, o3, o4, o5, o6, ...GS, o7];
 const XB = -100.8;   // line of the gate islands and palm strip behind the grandstand (as-built layout)
-// site levels outside the stadium: inside the octagon they follow the road round the stands; outside it the ground falls
-// from the high level at x -88 to the low level at x 0
+// site levels outside the stadium: inside the octagon they follow the road round the stands; outside it the ground is
+// piecewise linear in x — the high level to the west, a terrace behind the north-west and south-west corner yards (whose
+// walls stay about a storey high, site photos), then falling to the low level on the east
 const inPolyW = (x, z, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, zi] = P[i], [xj, zj] = P[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
-const LX0 = -88, LX1 = 0, LOWW = -D + LOWR;
-const Hout = x => x <= LX0 ? 0 : x >= LX1 ? LOWW : LOWW * (x - LX0) / (LX1 - LX0);
+const LOWW = -D + LOWR;
+const HK = [[-88, 0], [-66, -1.7], [-40, -1.7], [10, LOWW]];   // knots [x, level]
+const Hout = x => {
+  if (x <= HK[0][0]) return HK[0][1];
+  for (let i = 1; i < HK.length; i++) if (x <= HK[i][0]) { const [x0, y0] = HK[i - 1], [x1, y1] = HK[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
+  return HK[HK.length - 1][1];
+};
 const Hin = (x, z) => -D + ringY(uOf(z, -x));
 const LVL = (x, z) => inPolyW(x, z, OCT) ? Hin(x, z) : Hout(x);
 const withOct = shape => { shape.holes.push(new THREE.Path(OCT.map(([x, z]) => new THREE.Vector2(x, -z)))); return shape; };
@@ -398,24 +414,36 @@ function wallSeg(a, b) {   // in ~4 m pieces: a concrete kerb, retaining the gro
   }
 }
 const along = (a, b, d) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]); return [a[0] + (b[0] - a[0]) * d / L, a[1] + (b[1] - a[1]) * d / L]; };
-// vehicles get in only at the north-east and south-east corners; five ticket gates along the east wall face the car park
-const ROAD_GATES = [along(o1, o0, 5), along(o1, o2, 5), along(o4, o3, 5), along(o4, o5, 5)];
-const TICKET_GATES = [-68, -34, 0, 34, 68];
+// vehicles get in at the north-east corner and through G1 in the south wall, kept closed (site layout drawing). The boundary
+// wall south of the car park runs on from the south-east corner along the same line, with a closed gate where the road from
+// the south comes through into the car park. Along the east wall, facing the car park: ticket booths at the middle and both ends, plain exit gates between them, and
+// two more exit gates on the north-east diagonal (site photos)
+const ROAD_GATES = [along(o1, o0, 5), along(o1, o2, 5)];
+const G1 = [[29.4, o4[1]], [21.4, o4[1]]];
+const SPUR_X = 52.5, CP_EAST = 218.9;   // CP_EAST: car park's east kerb at the boundary wall
+const SOUTH_GATE = [[SPUR_X - 4, o4[1]], [SPUR_X + 4, o4[1]]];
+const TICKET_GATES = [-60, 0, 60], EXIT_Z = [-34, 34];
+const opening = (a, b, d, hw) => [along(a, b, d - hw), along(a, b, d + hw)];
+const EXITS = [...EXIT_Z.map(z => [[o2[0], z - 2.5], [o2[0], z + 2.5]]),
+  ...[1 / 3, 2 / 3].map(f => opening(ROAD_GATES[1], o2, f * Math.hypot(o2[0] - ROAD_GATES[1][0], o2[1] - ROAD_GATES[1][1]), 2.5))];
 const boothRoof = M('boothRoof', 0x8d939a), turnstileMat = M('turnstile', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(32, 32, x => {
   x.fillStyle = '#9aa1a7'; x.fillRect(0, 0, 32, 3); x.fillRect(0, 29, 32, 3); x.fillRect(0, 0, 3, 32); x.fillRect(29, 0, 3, 32);
   for (let y = 6; y < 28; y += 5) x.fillRect(0, y, 32, 2);
 }, false) });
-const east = TICKET_GATES.flatMap(z => [[o2[0], z - 4.2], [o2[0], z + 4.2]]);
-const YG = [along(o7, o0, 3.4), along(o7, o0, 6.0)];   // gate at the top of the north-west yard's stair
-[[GS[2], GS[3], o7, YG[0]], [YG[1], o0, ROAD_GATES[0]],
- [ROAD_GATES[1], o2, ...east, o3, ROAD_GATES[2]],
- [ROAD_GATES[3], o5, o6, GS[0], GS[1]]]
-  .forEach(run => run.slice(1).forEach((b, i) => {
-    const a = run[i];
-    if (a[0] === o2[0] && b[0] === o2[0] && TICKET_GATES.some(z => Math.abs((a[1] + b[1]) / 2 - z) < 1)) return;   // opening
-    wallSeg(a, b);
-  }));
-ROAD_GATES.forEach(([x, z]) => box(0.9, 3, 0.9, mat.white, x, 1.5, z));   // gate pillars
+const YARD_GATES = [11, 34, 61];   // north-west yard: pedestrian gates along the diagonal wall, metres from its west corner
+const YG = YARD_GATES.map(d => [along(o7, o0, d - 1.3), along(o7, o0, d + 1.3)]);
+// the north-east diagonal and the east wall, broken at the exits and booths
+const eastRuns = [];
+{
+  const ends = [...EXITS.slice(2), ...[...TICKET_GATES.map(z => [[o2[0], z - 4.2], [o2[0], z + 4.2]]), ...EXITS.slice(0, 2)].sort((a, b) => a[0][1] - b[0][1])];
+  let cur = [ROAD_GATES[1]];
+  ends.forEach(([p, q], i) => { if (i === 2) cur.push(o2); cur.push(p); eastRuns.push(cur); cur = [q]; });
+  cur.push(o3, o4, G1[0]); eastRuns.push(cur);
+}
+[[GS[2], GS[3], o7, YG[0][0]], [YG[0][1], YG[1][0]], [YG[1][1], YG[2][0]], [YG[2][1], o0, ROAD_GATES[0]], ...eastRuns,
+ [G1[1], o5, o6, GS[0], GS[1]], [o4, SOUTH_GATE[0]], [SOUTH_GATE[1], [CP_EAST, o4[1]]]]
+  .forEach(run => run.slice(1).forEach((b, i) => wallSeg(run[i], b)));
+[...ROAD_GATES, ...G1, ...SOUTH_GATE].forEach(([x, z]) => box(0.9, 3, 0.9, mat.white, x, 1.5, z));   // gate pillars
 // roofed booth with two full-height turnstiles, a barred pedestrian gate either side with a green bar, and a concrete
 // approach between low walls on the car park side (site photos)
 const sideGateMat = M('sideGate', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(64, 64, (x) => {
@@ -423,17 +451,60 @@ const sideGateMat = M('sideGate', 0xffffff, { side: DS, transparent: true, alpha
   for (let i = 10; i < 60; i += 10) x.fillRect(i, 0, 3, 64);
   x.fillStyle = '#2f8a4a'; x.fillRect(0, 34, 64, 6);
 }, false) });
+const closedGate = ([a, b], y0) => {   // four barred panels between the pillars of a vehicle opening; y0: level at its foot
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]), w = (L - 0.9) / 4;
+  for (let i = 0; i < 4; i++) {
+    const d = 0.45 + (i + 0.5) * w, g = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.04, 2.1), sideGateMat);
+    g.position.set(a[0] + (b[0] - a[0]) * d / L, y0 + 1.1, a[1] + (b[1] - a[1]) * d / L); g.rotation.y = Math.atan2(-(b[1] - a[1]), b[0] - a[0]); g.userData.lvl = true; scene.add(g);
+  }
+};
+closedGate(G1, Hin(25.4, o4[1]) + 0.087); closedGate(SOUTH_GATE, Hout(SPUR_X) + 0.07);
 TICKET_GATES.forEach(z => {
-  const x = o2[0];
-  box(3.4, 0.14, 4.6, boothRoof, x + 1.2, 2.95, z);
-  [-2.15, 2.15].forEach(dz => box(3.2, 2.9, 0.3, boothRoof, x + 1.2, 1.45, z + dz));   // solid sides
-  [-1.0, 1.0].forEach(dz => box(1.2, 2.25, 1.2, turnstileMat, x + 1.2, 1.13, z + dz));
+  const x = o2[0];   // fence line
+  box(3.4, 0.14, 4.6, boothRoof, x + 0.4, 2.95, z);
+  [-2.15, 2.15].forEach(dz => box(3.2, 2.9, 0.3, boothRoof, x + 0.4, 1.45, z + dz));   // solid sides
+  [-1.0, 1.0].forEach(dz => box(1.2, 2.25, 1.2, turnstileMat, x + 0.4, 1.13, z + dz));
   [-3.2, 3.2].forEach(dz => {
     const g = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 2.1), sideGateMat); g.position.set(x + 0.05, 1.2, z + dz); g.rotation.y = Math.PI / 2; scene.add(g);
     box(0.12, 2.3, 0.12, mat.steel, x + 0.05, 1.15, z + dz + Math.sign(dz) * 0.98);
   });
-  flat(shapeFrom(rectPts(x + 0.2, z - 4.2, x + 7, z + 4.2)), mat.concrete, 0.07);   // approach
-  [-4.3, 4.3].forEach(dz => box(6.6, 0.5, 0.25, mat.concrete, x + 3.7, 0.25, z + dz));
+  // path inside, from the booth to the ring road's edge (which curves away towards the ends of the east side)
+  const Q = [-4.2, 4.2].map(dz => roadEdge(x, z + dz, RR + 3.4).pt);
+  flat(shapeFrom([[x - 0.1, z - 4.2], [x - 0.1, z + 4.2], Q[1], Q[0]]), mat.concrete, 0.13);
+  [-4.3, 4.3].forEach((dz, i) => {
+    const q = roadEdge(x, z + dz, RR + 3.6).pt, L = Math.hypot(x - 0.1 - q[0], z + dz - q[1]);
+    const w = box(L, 0.5, 0.25, mat.concrete, (x - 0.1 + q[0]) / 2, 0.25, (z + dz + q[1]) / 2); w.rotation.y = Math.atan2(-(z + dz - q[1]), x - 0.1 - q[0]);
+  });
+});
+// exit gates: a steel frame with four leaves (mesh over vertical bars, a green push bar across), set in the fence at the
+// back of a concrete apron inside, between two low walls that slope down to the ring road (site photos)
+const exitLeafMat = M('exitLeaf', 0xffffff, { side: DS, transparent: true, alphaTest: 0.5, map: canvasTex(64, 128, (x) => {
+  x.fillStyle = '#8f959a'; x.fillRect(0, 0, 64, 4); x.fillRect(0, 124, 64, 4); x.fillRect(0, 0, 4, 128); x.fillRect(60, 0, 4, 128);
+  for (let i = 10; i < 60; i += 9) x.fillRect(i, 0, 3, 128);
+  x.fillRect(0, 70, 64, 7);
+  x.fillStyle = 'rgba(143,149,154,0.85)'; for (let i = 4; i < 60; i += 4) x.fillRect(i, 4, 1, 66); for (let j = 4; j < 70; j += 4) x.fillRect(4, j, 56, 1);
+  x.fillStyle = '#2f8a4a'; x.fillRect(4, 78, 56, 4);
+}, false) });
+EXITS.forEach(([p, q]) => {
+  const c = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], L = Math.hypot(q[0] - p[0], q[1] - p[1]), t = [(q[0] - p[0]) / L, (q[1] - p[1]) / L];
+  let n = [t[1], -t[0]]; if (n[0] * c[0] + n[1] * c[1] < 0) n = [-n[0], -n[1]];   // outwards, towards the car park
+  const yo = LVL(c[0] + n[0] * 1.5, c[1] + n[1] * 1.5), y0 = LVL(c[0] - n[0] * 1.5, c[1] - n[1] * 1.5), ry = Math.atan2(-t[1], t[0]);
+  const dep = Math.max(1.5, roadEdge(...c).gap - 0.25);   // apron runs inside, from the gate to the ring road's kerb
+  const at = (d, o = 0) => [c[0] + t[0] * d + n[0] * o, c[1] + t[1] * d + n[1] * o];
+  const part = (w, h, dp, m, d, o, y) => { const [x, z] = at(d, o), b = box(w, h, dp, m, x, y, z); b.rotation.y = ry; b.userData.lvl = true; return b; };
+  if (yo > y0 + 0.05) part(5.0, yo - y0, 0.4, boundaryConc, 0, 0.2, (y0 + yo) / 2);   // step up to the car park
+  [-2.42, 0, 2.42].forEach(d => part(0.12, 2.45, 0.12, mat.steel, d, 0, y0 + 1.225));
+  part(4.96, 0.12, 0.12, mat.steel, 0, 0, y0 + 2.4);
+  [-1.81, -0.6, 0.6, 1.81].forEach(d => { const [x, z] = at(d), g = new THREE.Mesh(new THREE.PlaneGeometry(1.18, 2.2), exitLeafMat); g.position.set(x, y0 + 1.15, z); g.rotation.y = ry; g.userData.lvl = true; scene.add(g); });
+  flat(shapeFrom([at(-2.7, -0.2), at(2.7, -0.2), at(2.7, -dep), at(-2.7, -dep)]), mat.concrete, 0.13);   // apron
+  [-1, 1].forEach(sg => {   // low walls either side, sloping down towards the road
+    const sh = new THREE.Shape([[0, 0], [dep, 0], [dep, 0.15], [0, 0.8]].map(([a, b]) => new THREE.Vector2(a, b)));
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.25, bevelEnabled: false });
+    const X = new THREE.Vector3(-n[0], 0, -n[1]), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3().crossVectors(X, Y);
+    const w = new THREE.Mesh(g, boundaryConc); w.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+    const off = sg > 0 ? 2.7 : -2.95, o = Z.clone().multiplyScalar(off);
+    w.position.set(c[0] + o.x, y0, c[1] + o.z); w.castShadow = w.receiveShadow = true; w.userData.lvl = true; scene.add(w);
+  });
 });
 // ---- behind the grandstand, per the as-built layout
 const palmPts = [];
@@ -449,7 +520,7 @@ function planter(x0, z0, x1, z1, r = 0.3) {   // kerbed grass bed
   const X0 = Math.min(x0, x1), X1 = Math.max(x0, x1), Z0 = Math.min(z0, z1), Z1 = Math.max(z0, z1);
   [[0, 0.4, mat.concrete], [0.25, 0.42, mat.grass]].forEach(([i, h, m]) => {
     const g = new THREE.ExtrudeGeometry(rrShape(X0 + i, Z0 + i, X1 - i, Z1 - i, Math.max(0.05, r - i)), { depth: h, bevelEnabled: false }).rotateX(-Math.PI / 2);
-    const o = new THREE.Mesh(g, m); o.receiveShadow = true; scene.add(o);
+    const o = new THREE.Mesh(g, m); o.receiveShadow = true; o.position.y = LVL((X0 + X1) / 2, (Z0 + Z1) / 2); o.userData.lvl = true; scene.add(o);   // built in world coords, so level it here
   });
 }
 // car park between the gate islands and the stadium wall: two rows of bays along the island line, 14 to the south and 18 to the north
@@ -476,13 +547,56 @@ for (let z = -27; z > -85; z -= 4.5) box(0.6, 0.45, 0.45, bollardMat, -100.4, 0.
 
 // 7 m road round the outside of the stands, level with the pitch at the grandstand ends and falling LOWR along the east; it
 // ends at the junctions beside the grandstand ends, with spurs to the two vehicle gates
+{
+  const strip = (verts, m, dy) => {
+    const pos = []; verts.forEach(([a, b, c]) => [a, b, c].forEach(([x, z]) => pos.push(x, Hin(x, z) + dy, z)));
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+    const o = new THREE.Mesh(g, m); o.receiveShadow = true; o.userData.lvl = true; scene.add(o);
+  };
+  // the strip between the ring road and the boundary along the north-east diagonal, the east side and the south-east
+  // diagonal, round to G1: grass, with kerbstones along the road, broken for a path at each gate
+  const chain = [along(ROAD_GATES[1], o2, 7), o2, o3, o4, along(G1[0], o4, 3.6)];
+  const pts = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const [a, b] = [chain[i], chain[i + 1]], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / 1.5);
+    for (let k = i ? 1 : 0; k <= n; k++) pts.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
+  }
+  const gates = [...TICKET_GATES.map(z => [o2[0], z, 4.5]), ...EXITS.map(([p, q]) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, 2.95])];
+  const grass = [], kerb = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const m = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2];
+    if (gates.some(([x, z, hw]) => Math.hypot(m[0] - x, m[1] - z) < hw)) continue;
+    const P = [pts[i], pts[i + 1]].map(p => { const e = roadEdge(...p), t = Math.min(0.4 / Math.max(e.gap, 0.4), 1); return [p[0] + (e.pt[0] - p[0]) * t, p[1] + (e.pt[1] - p[1]) * t]; });   // off the fence's kerb
+    const Q = [pts[i], pts[i + 1]].map(p => roadEdge(p[0], p[1], RR + 3.75).pt), K = [pts[i], pts[i + 1]].map(p => roadEdge(...p).pt);
+    grass.push([P[0], Q[0], P[1]], [P[1], Q[0], Q[1]]);
+    kerb.push([Q[0], K[0], Q[1]], [Q[1], K[0], K[1]]);
+  }
+  strip(grass, M('stripGrass', 0x86a256), 0.12);
+  strip(kerb, M('stripKerb', 0xcfcbc2), 0.18);
+}
 const tEnd = Math.acos((62 - A) / RR), ringU = [4 - (tEnd + Math.PI / 2) / Math.PI, 5 + (tEnd + Math.PI / 2) / Math.PI];
 mesh(band(...ringU, [[RR - 3.5, 0.14], [RR + 3.5, 0.14]], A, { tile: 12, yFn: ringY, res: 300 }), roadMat, S);
-[ROAD_GATES.slice(0, 2), ROAD_GATES.slice(2)].forEach(([g0, g1]) => {
+[ROAD_GATES, G1].forEach(([g0, g1]) => {
   const gx = (g0[0] + g1[0]) / 2, gz = (g0[1] + g1[1]) / 2;
   let best = [0, 0, Infinity];
   for (let u = 0; u < 4; u += 0.005) { const [xl, zl] = pp(u, RR, A), d = Math.hypot(-zl - gx, xl - gz); if (d < best[2]) best = [-zl, xl, d]; }   // stadium group is turned -90°
-  roadSeg(gx, gz, best[0], best[1], 7, roadMat, 0.094, 12);
+  // spur from the gate to the ring road, its kerbs curving round onto the road's outer edge both ways (a bell-mouth)
+  const G = [gx, gz], L = best[2], d = [(best[0] - gx) / L, (best[1] - gz) / L], t = [-d[1], d[0]], hw = 3.5, Rf = 7;
+  const add = (a, b, k) => [a[0] + b[0] * k, a[1] + b[1] * k], N = 16;
+  const el = Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) * Math.sign((g1[0] - g0[0]) * t[0] + (g1[1] - g0[1]) * t[1]), e = [(g1[0] - g0[0]) / el, (g1[1] - g0[1]) / el];   // along the gate
+  const curve = sd => {
+    const S = add(add(G, e, sd * hw), d, 0.02), C = add(add(G, d, L - 3.5), t, sd * hw), E = roadEdge(...add(C, t, sd * Rf)).pt, out = [];
+    for (let i = 0; i <= N; i++) { const k = i / N, a = (1 - k) * (1 - k), b = 2 * k * (1 - k), c = k * k; out.push([S[0] * a + C[0] * b + E[0] * c, S[1] * a + C[1] * b + E[1] * c]); }
+    return out;
+  };
+  const cl = curve(-1), cr = curve(1), back = [];
+  for (let i = 1; i < 12; i++) { const k = i / 12; back.push(roadEdge(cl[N][0] * (1 - k) + cr[N][0] * k, cl[N][1] * (1 - k) + cr[N][1] * k, RR + 3.0).pt); }
+  flat(shapeFrom([...cl, roadEdge(...cl[N], RR + 3.0).pt, ...back, roadEdge(...cr[N], RR + 3.0).pt, ...cr.slice().reverse()]), mat.asphalt, 0.155);
+  [[cl, -1], [cr, 1]].forEach(([c, sd]) => {   // kerbstones along each curve, on the pavement side
+    const off = c.map((p, i) => { const a = c[Math.max(0, i - 1)], b = c[Math.min(N, i + 1)], dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz);
+      let n = [-dz / l, dx / l]; if ((n[0] * t[0] + n[1] * t[1]) * sd < 0) n = [-n[0], -n[1]]; return [p[0] + n[0] * 0.3, p[1] + n[1] * 0.3]; });
+    flat(shapeFrom([...c, ...off.reverse()]), mat.concrete, 0.2);
+  });
 });
 buildTrack(S, 50);
 
@@ -656,7 +770,7 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known, plan) {   // s
     [-1, 1].forEach(s => [1.0, 0.55].forEach(y => bar3(P3(uc + s * h, SR0, YF + y), P3(uc + s * h, rd, YF + (d - 1) * SRISE + y), 0.06, mat.white)));
     bar3(P3(uc - h, rd + 0.05, YF + d * SRISE + 1), P3(uc + h, rd + 0.05, YF + d * SRISE + 1), 0.06, mat.white);
     // platform over the pitch
-    placeAt(uc, R0 - PD / 2, SOFF + 0.45, pw, 0.9, PD, fasciaMat);
+    placeAt(uc, R0 - PD / 2, 0, SOFF + 0.45, pw, 0.9, PD, fasciaMat);   // floor slab, level with the deck
     [[-1, R0 - PD + 0.25], [1, R0 - PD + 0.25], [-1, R0 + 0.3], [1, R0 + 0.3]].forEach(([s, r]) => placeAt(uc, r, s * (pw / 2 - 0.3), SOFF / 2, 0.45, SOFF, 0.45, colGrey));
     placeAt(uc, R0 - PD + 0.03, 0, YF + 0.55, pw, 1.05, 0.04, standGlass).castShadow = false;
     [-1, 1].forEach(s => { placeAt(uc, R0 - PD / 2, s * (pw / 2 - 0.03), YF + 0.55, 0.04, 1.05, PD, standGlass).castShadow = false; });
@@ -681,8 +795,10 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known, plan) {   // s
   // where the road falls away the colonnade edge becomes a parapet with a maroon rail, over a tiled retaining wall
   mesh(band(u0, u1, [[RF, SOFB], [RF, H1 + 1.2]], A, { tile: 40 }), backMat, S);
   mesh(band(u0, u1, [[RCB, SOFB], [RF, SOFB]], A), soffitMat, S);
-  // east stand: by each tunnel, a stair from the colonnade down to a chamber under it, entered from the road through an
-  // opening in the tiled base (site photos); on the side towards the middle of the stand
+  // east stand: by each tunnel, on the side towards the middle of the stand, two steps up from the road lead to an opening
+  // in the tiled base and a level corridor running straight in under the colonnade (site photos). At its end a flight
+  // climbs on into the stand to a half landing; a second flight turns back up beside it and comes out at colonnade level
+  // in a recess in the back wall, beside the tunnel passage (with the block's seat board on the pier between them)
   const tP = OW / 2 + 0.24, FL = LOWR + 0.3, tU = t => t / (2 * A);
   // curved stands: which way (+1 / -1 along u) each main tunnel's washroom unit sits from its entrance
   const away = plan ? Math.sign(plan.toU(1) - plan.toU(0)) : 1, gEnd = plan ? plan.toU(0) : u0;
@@ -690,33 +806,47 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known, plan) {   // s
   const wcSide = voms.map(uc => uc === nearest ? away : -away);
   const EF = blocks ? voms.map(uc => ({ uc, dir: uc < (u0 + u1) / 2 ? 1 : -1 })) : [];
   const urange = (f, a, b) => [f.uc + tU(f.dir * a), f.uc + tU(f.dir * b)].sort((p, q) => p - q);
-  const holeR = EF.map(f => urange(f, tP + 0.6, tP + 4.8)), openR = EF.map(f => urange(f, tP + 3.2, tP + 7.6));
-  EF.forEach(f => { const xc = -A + 2 * A * f.uc, xa = xc + f.dir * (tP + 0.6), xb = xc + f.dir * (tP + 4.8); floorHoles.push([Math.min(xa, xb), -(RCB + 1.5), Math.max(xa, xb), -RCB]); });
-  let p0 = u0;
-  [...holeR, [u1, u1]].forEach(([a, b]) => {
-    if (a > p0) mesh(band(p0, a, [[RCB, 0.06], [RF + 0.35, 0.06]], A, { tile: 3 }), paverMat, S);
-    if (b > a) mesh(band(a, b, [[RCB + 1.5, 0.06], [RF + 0.35, 0.06]], A, { tile: 3 }), paverMat, S);
-    p0 = b;
+  // lanes, measured along the stand from the tunnel's centre: the second flight next to the tunnel, the corridor and first
+  // flight beyond it
+  const L2 = [tP + 0.55, tP + 2.45], L1 = [tP + 2.55, tP + 4.65], rIn = RCB - 3.4;   // rIn: back of the stairwell, inside the stand
+  const holeR = [], openR = EF.map(f => urange(f, L1[0] - 0.05, L1[1] + 0.05)), recessR = EF.map(f => urange(f, L2[0], L2[1]));
+  EF.forEach(f => {
+    const xc = -A + 2 * A * f.uc, X = d => xc + f.dir * d;
+    floorHoles.push([Math.min(X(L2[0]), X(L1[1])), -RCB, Math.max(X(L2[0]), X(L1[1])), -rIn]);   // the stairwell, through the floor inside the stand
   });
+  mesh(band(u0, u1, [[RCB, 0.06], [RF + 0.35, 0.06]], A, { tile: 3 }), paverMat, S);
   EF.forEach(({ uc, dir }) => {
-    const T = d => dir * d, nS = 15, rise = (0.05 - FL) / nS, tr = 0.28, P3 = (r, t, y) => { const [x, z] = onRow(uc, r, t); return [x, y, z]; };
-    for (let i = 0; i < nS - 1; i++) { const top = 0.05 - (i + 1) * rise; placeAt(uc, RCB + 0.77, T(tP + 0.6 + (i + 0.5) * tr), (top + FL) / 2, tr + 0.02, top - FL, 1.4, mat.concrete); }
-    const cw = RF + 0.33 - RCB, cr = (RCB + RF + 0.33) / 2, ch = 0.05 - FL;
-    placeAt(uc, cr, T(tP + 4.3), FL - 0.05, 7.8, 0.1, cw, mat.concrete);                     // chamber floor
-    placeAt(uc, RCB - 0.1, T(tP + 4.3), (FL + 0.05) / 2, 7.8, ch, 0.2, chamberMat);         // back wall
-    [tP + 0.4, tP + 8.2].forEach(d => placeAt(uc, cr, T(d), (FL + 0.05) / 2, 0.2, ch, cw, chamberMat));
-    placeAt(uc, RF + 0.6, T(tP + 5.4), (FL + LOWR) / 2, 4.4, FL - LOWR, 0.6, mat.concrete);   // step up from the footpath
-    // rails round the stairwell on the colonnade
-    [0.6, 1.06].forEach(y => bar3(P3(RCB + 1.55, T(tP + 0.6), y), P3(RCB + 1.55, T(tP + 4.8), y), 0.05, steelRail));
-    [0.6, 1.06].forEach(y => bar3(P3(RCB, T(tP + 4.85), y), P3(RCB + 1.55, T(tP + 4.85), y), 0.05, steelRail));
-    for (let d = tP + 0.7; d <= tP + 4.8; d += 1.35) placeAt(uc, RCB + 1.55, T(d), 0.56, 0.05, 1.0, 0.05, steelRail);
+    const T = d => dir * d, P3 = (r, t, y) => { const [x, z] = onRow(uc, r, t); return [x, y, z]; };
+    const yTop = 0.05, yM = (FL + yTop) / 2, n = 8, tr = 0.28, rise = (yM - FL) / n, rLand = RCB - n * tr;
+    const c1 = (L1[0] + L1[1]) / 2, w1 = L1[1] - L1[0], c2 = (L2[0] + L2[1]) / 2, w2 = L2[1] - L2[0], cAll = (L2[0] + L1[1]) / 2, wAll = L1[1] - L2[0];
+    // two steps up from the footpath, then the corridor's floor
+    placeAt(uc, RF + 0.9, T(c1), (LOWR + LOWR + 0.15) / 2, w1 + 1.2, 0.15, 0.5, mat.concrete);
+    placeAt(uc, RF + 0.55, T(c1), (LOWR + FL) / 2, w1 + 0.6, FL - LOWR, 0.5, mat.concrete);
+    placeAt(uc, (RCB + RF + 0.33) / 2, T(c1), FL - 0.05, w1, 0.1, RF + 0.33 - RCB, mat.concrete);
+    [L1[0] - 0.05, L1[1] + 0.05].forEach(d => placeAt(uc, (RCB + RF + 0.33) / 2, T(d), (FL + yTop) / 2, 0.1, yTop - FL, RF + 0.33 - RCB, chamberMat));   // corridor walls
+    // the stairwell inside the stand
+    for (let i = 0; i < n; i++) {
+      const t1 = FL + (i + 1) * rise; placeAt(uc, RCB - (i + 0.5) * tr, T(c1), (t1 + FL) / 2, w1, t1 - FL, tr + 0.02, mat.concrete);    // first flight, on in
+      const t2 = yM + (i + 1) * rise; placeAt(uc, rLand + (i + 0.5) * tr, T(c2), (t2 + FL) / 2, w2, t2 - FL, tr + 0.02, mat.concrete);   // second flight, back out
+    }
+    placeAt(uc, (rIn + rLand) / 2, T(cAll), (yM + FL) / 2, wAll, yM - FL, rLand - rIn, mat.concrete);   // half landing
+    const SC = 2.6;   // the stairwell's ceiling, at the rooms' ceiling height
+    placeAt(uc, (rIn + RCB) / 2, T(cAll), SC + 0.1, wAll + 0.2, 0.2, RCB - rIn, mat.white);
+    placeAt(uc, rIn - 0.1, T(cAll), (FL + SC) / 2, wAll + 0.2, SC - FL, 0.2, chamberMat);   // back wall
+    [L2[0] - 0.05, L1[1] + 0.05].forEach(d => placeAt(uc, (rIn + RCB) / 2, T(d), (FL + SC) / 2, 0.1, SC - FL, RCB - rIn, chamberMat));
+    placeAt(uc, (rLand + RCB) / 2, T(L1[0] - 0.05), (FL + SC) / 2, 0.1, SC - FL, RCB - rLand, chamberMat);   // wall between the flights
+    placeAt(uc, RCB - 0.01, T(c1), (yTop + SC) / 2, w1 + 0.1, SC - yTop, 0.1, chamberMat);   // above the corridor's mouth, the back wall carries on
+    // handrails up both flights
+    [[c1, L1[0] + 0.1, RCB, FL, rLand, yM], [c1, L1[1] - 0.1, RCB, FL, rLand, yM], [c2, L2[0] + 0.1, rLand, yM, RCB, yTop], [c2, L2[1] - 0.1, rLand, yM, RCB, yTop]]
+      .forEach(([, t, ra, ya, rb, yb]) => bar3(P3(ra, T(t), ya + 0.9), P3(rb, T(t), yb + 0.9), 0.05, steelRail));
     // sector sign and hydrant beside the opening
-    placePlane(uc, RF + 0.36, T(tP + 8.3), LOWR + 1.75, 0.42, 0.66, sectorSign);
-    { const [x, z] = onRow(uc, RF + 0.8, T(tP + 8.95)); hydExtra.push([x, z, ringY(uc)]); }
+    placePlane(uc, RF + 0.36, T(L1[1] + 0.7), LOWR + 1.75, 0.42, 0.66, sectorSign);
+    { const [x, z] = onRow(uc, RF + 0.8, T(L1[1] + 1.35)); hydExtra.push([x, z, ringY(uc)]); }
   });
   const openU = (uc, w = OW) => (w / 2 + 0.24) / segLen(uc, RCB);
   let w0 = u0;
-  [...tun.map(t => [t.uc - openU(t.uc, t.w), t.uc + openU(t.uc, t.w)]), [u1, u1]].forEach(([a, b]) => { if (a > w0) vband(w0, a, RCB, 0, SOFB, roomsOutMat, 12); if (b > a) vband(a, b, RCB, 2.6, SOFB, mat.white); w0 = b; });
+  // openings in the back wall: tunnel passages, stairwell recesses
+  [...tun.map(t => [t.uc - openU(t.uc, t.w), t.uc + openU(t.uc, t.w)]), ...recessR, [u1, u1]].sort((p, q) => p[0] - q[0]).forEach(([a, b]) => { if (a > w0) vband(w0, a, RCB, 0, SOFB, roomsOutMat, 12); if (b > a) vband(a, b, RCB, 2.6, SOFB, mat.white); w0 = b; });
   if (blocks) {
     // north end of the base: an open bay (stores) with louvred vents inside, a pair of large grey doors, a hydrant between
     const bu = u0 + tU(6.0), bw = 6.0, cw = RF + 0.33 - RCB, cr = (RCB + RF + 0.33) / 2, ch = 0.05 - (LOWR + 0.15);
@@ -742,9 +872,9 @@ function stand(u0, u1, voms, backMat, blocks, sector, rev, known, plan) {   // s
   along(RF - 0.1, 12, v => { const [x, z] = pp(v, RF - 0.1, A); flagPts.push([x, z]); });
   along(RF + 0.07, 30, v => { const [x, z] = pp(v, RF + 0.07, A), p = new THREE.Mesh(silGeo, SILS[silK++ % SILS.length]); p.position.set(x, (SOFB + H1) / 2 + 0.8, z); p.rotation.y = facing(v, RF) + Math.PI; S.add(p); });
   if (blocks) {
-    // east stand: male and female washrooms on both sides of each tunnel, a fire hose reel by the end-block board
+    // east stand: male and female washrooms on the end side of each tunnel, a fire hose reel by the end-block board
     EF.forEach(({ uc, dir }) => {
-      [tP + 11.7, -(tP + 5.5)].forEach(d => { placePlane(uc, RCB + 0.03, dir * d, 1.3, 5.6, 2.6, wcPairMat); placeAt(uc, RCB + 0.55, dir * (d + Math.sign(d) * 3.4), 0.56, 0.75, 1.0, 0.65, binGreen); });
+      [-(tP + 5.5)].forEach(d => { placePlane(uc, RCB + 0.03, dir * d, 1.3, 5.6, 2.6, wcPairMat); placeAt(uc, RCB + 0.55, dir * (d + Math.sign(d) * 3.4), 0.56, 0.75, 1.0, 0.65, binGreen); });
       placeAt(uc, RCB + 0.16, -dir * (tP + 1.5), 1.35, 0.8, 0.8, 0.26, hoseRed);
       placeAt(uc, RCB + 0.1, -dir * (tP + 1.5), 0.48, 0.07, 0.95, 0.07, hoseRed);
     });
@@ -1084,9 +1214,9 @@ const SEAT_COUNTS = {
   // ---- back of the grandstand (site photos). The rear is at site level, D above the pitch. A service corridor runs the full
   // length at pitch level, under the building and an open lightwell, reached by vehicle ramps at both ends. Above it is the
   // entrance level: lobby with two lifts in the middle, a turnstile entrance either side, bridges over the lightwell, murals;
-  // then a colonnade on raked concrete columns carrying the upper floors, wrapped in a curved screen of horizontal louvres.
+  // then a colonnade on concrete columns carrying the upper floors, wrapped in a curved screen of horizontal louvres.
   const GL = D + 0.3, SOF = 7.8, ZC0 = 75.5, ZW = 77.5, ZU = 84, ZK = 86.3;   // entrance floor, soffit, rooms face, entrance face, upper wall, kerb
-  const ENTR = [[-6.2, 6.2], [-21.7, -15.5], [15.5, 21.7]];   // lobby, turnstile entrances
+  const ENTR = [[-6.2, 6.2], [-24.8, -18.6], [18.6, 24.8]];   // lobby, turnstile entrances (each one bay, between columns)
   const greyBlue = M('greyBlue', 0x9ea8ae), darkBand = M('darkBand', 0x4b5056), tileMat = M('tiles', 0x8e9499), concRough = M('rawConcrete', 0x9a9d9f);
   const texMat = (w, h, draw, rx = 1, o = {}) => { const m = M('tex', 0xffffff, { map: canvasTex(w, h, draw, rx !== 1), ...o }); m.map.repeat.set(rx, 1); return m; };
   const plane = (w, h, m, x, y, z, ry = 0, parent = SH) => { const p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); p.position.set(x, y, z); p.rotation.y = ry; parent.add(p); return p; };
@@ -1114,7 +1244,7 @@ const SEAT_COUNTS = {
   ENTR.forEach(([a, b]) => box(b - a, 0.3, ZR + 0.4 - ZW, tileMat, (a + b) / 2, D + 0.15, (ZW + ZR + 0.4) / 2, SH));   // bridges
 
   // entrance level: enclosure with the lobby and turnstile openings cut into it
-  [[-31.6, -21.7, ZW], [-21.7, -15.5, 75], [-15.5, -6.2, ZW], [-6.2, 6.2, 72], [6.2, 15.5, ZW], [15.5, 21.7, 75], [21.7, 31.6, ZW]]
+  [[-31.6, -24.8, ZW], [-24.8, -18.6, 75], [-18.6, -6.2, ZW], [-6.2, 6.2, 72], [6.2, 18.6, ZW], [18.6, 24.8, 75], [24.8, 31.6, ZW]]
     .forEach(([a, b, zb]) => box(b - a, SOF - GL, zb - ZB, mat.white, (a + b) / 2, (GL + SOF) / 2, (ZB + zb) / 2, SH));
   box(12.4, 0.02, 75.5 - 72, tileMat, 0, GL + 0.01, 73.75, G);
   ENTR.forEach(([a, b]) => [a + 0.15, b - 0.15].forEach(x => box(0.3, 1.1, ZR + 0.4 - ZW, greyBlue, x, GL + 0.55, (ZW + ZR + 0.4) / 2, G)));   // low walls along the bridges
@@ -1125,7 +1255,7 @@ const SEAT_COUNTS = {
   const liftMat = M('lift', 0xd2d6d9, { metalness: 0.6, roughness: 0.3 });
   [-1.6, 1.6].forEach(x => box(1.3, 2.3, 0.06, liftMat, x, GL + 1.15, 72.03, G));
   const wood = rx => texMat(64, 16, x => { x.fillStyle = '#5b4030'; x.fillRect(0, 0, 64, 16); x.fillStyle = '#3e2b20'; for (let i = 0; i < 64; i += 16) x.fillRect(i, 0, 2, 16); x.fillStyle = '#6b4d3a'; x.fillRect(7, 0, 1, 16); }, rx);
-  [[-6.2, 6.2, 72], [-21.7, -15.5, 75], [15.5, 21.7, 75]].forEach(([a, b, z0]) => {
+  [[-6.2, 6.2, 72], [-24.8, -18.6, 75], [18.6, 24.8, 75]].forEach(([a, b, z0]) => {
     box(b - a, 0.1, ZR + 0.4 - z0, wood((b - a) / 1.2), (a + b) / 2, SOF - 0.36, (z0 + ZR + 0.4) / 2, SH);
     for (let x = a + 1.8; x < b - 1; x += 3) for (let z = z0 + 1.5; z < ZR; z += 3) { const l = new THREE.Mesh(new THREE.CircleGeometry(0.22, 14), lightMat); l.rotation.x = Math.PI / 2; l.position.set(x, SOF - 0.42, z); SH.add(l); }
   });
@@ -1135,23 +1265,23 @@ const SEAT_COUNTS = {
   // murals on the entrance-level face, seen across the lightwell
   const mural = draw => texMat(256, 72, draw, 1, { roughness: 0.9 });
   const disc = (x, cx, cy, r, c) => { x.fillStyle = c; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); };
-  [[-26.65, mural(x => {   // woman drinking from a bowl, sun and palms
+  [[-28.2, mural(x => {   // woman drinking from a bowl, sun and palms
     const g = x.createLinearGradient(0, 0, 256, 0); g.addColorStop(0, '#e2462f'); g.addColorStop(0.55, '#f2a531'); g.addColorStop(1, '#f6d548'); x.fillStyle = g; x.fillRect(0, 0, 256, 72);
     disc(x, 206, 20, 15, '#fbe9a0'); x.fillStyle = '#2c6fb8'; x.fillRect(0, 58, 256, 14);
     disc(x, 118, 24, 8, '#5a3424'); x.fillRect(110, 32, 18, 30); x.fillStyle = '#e8e2d0'; x.fillRect(130, 26, 22, 7);
     x.fillStyle = '#2d5a2a'; [26, 46, 64].forEach(p => { x.fillRect(p, 28, 3, 32); x.beginPath(); x.ellipse(p + 1, 27, 11, 4, 0, 0, 7); x.fill(); });
-  })], [-10.85, mural(x => {   // yellow, with Adinkra symbols
+  })], [-12.4, mural(x => {   // yellow, with Adinkra symbols
     x.fillStyle = '#f3c623'; x.fillRect(0, 0, 256, 72); disc(x, 70, 40, 26, '#e0532f'); disc(x, 70, 24, 6, '#3b2a20'); x.fillStyle = '#3b2a20'; x.fillRect(65, 30, 10, 26);
     x.strokeStyle = '#111'; x.lineWidth = 4; [[150, 24], [196, 40], [160, 54], [222, 20]].forEach(([cx, cy]) => { x.beginPath(); x.ellipse(cx, cy, 13, 8, 0, 0, 7); x.stroke(); disc(x, cx, cy, 3, '#111'); });
-  })], [10.85, mural(x => {   // blue, hands around Africa
+  })], [12.4, mural(x => {   // blue, hands around Africa
     x.fillStyle = '#2f64b4'; x.fillRect(0, 0, 256, 72); x.strokeStyle = '#6f9ad6'; x.lineWidth = 3;
     for (let i = 0; i < 9; i++) { x.beginPath(); x.arc(30 + i * 26, 36, 22, 0.4, 2.6); x.stroke(); }
     disc(x, 128, 36, 20, '#e8f0f8'); x.fillStyle = '#e07b2c'; x.beginPath(); x.ellipse(127, 33, 7, 11, 0.3, 0, 7); x.fill(); x.fillStyle = '#3c8a3c'; x.fillRect(122, 40, 7, 6);
     x.fillStyle = '#f0e6d8'; [[100, 20], [156, 20], [98, 52], [158, 52]].forEach(([cx, cy]) => { x.beginPath(); x.ellipse(cx, cy, 9, 5, cx < 128 ? 0.6 : -0.6, 0, 7); x.fill(); });
-  })], [26.65, mural(x => {   // three laughing women on colour blocks
+  })], [28.2, mural(x => {   // three laughing women on colour blocks
     [['#2fa84f', 0], ['#f3c623', 64], ['#e5432f', 128], ['#2f64b4', 192]].forEach(([c, x0]) => { x.fillStyle = c; x.fillRect(x0, 0, 64, 72); });
     [[96, 40], [128, 34], [160, 40]].forEach(([cx, cy]) => { disc(x, cx, cy, 15, '#2b1c16'); disc(x, cx, cy + 4, 11, '#6b3f2a'); x.fillStyle = '#7a3fa0'; x.fillRect(cx - 12, cy - 18, 24, 7); });
-  })]].forEach(([x, m]) => plane(7.5, 2.1, m, x, GL + 2.25, ZW + 0.02));
+  })]].forEach(([x, m]) => plane(Math.abs(x) > 20 ? 6.0 : 7.5, 2.1, m, x, GL + 2.25, ZW + 0.02));
 
   // upper floors over the lightwell and colonnade
   box(63.2, 18.6 - SOF, ZU - ZB, mat.white, 0, (SOF + 18.6) / 2, (ZB + ZU) / 2, SH);
@@ -1162,11 +1292,8 @@ const SEAT_COUNTS = {
     x.fillStyle = '#fdfdfb'; x.fillRect(46, 64, 36, 22); x.fillStyle = '#9aa0a4'; for (let i = 0; i < 5; i++) x.fillRect(50 + i * 6, 68, 3, 14);
   }, 10), 0, (SOF + 18.6) / 2, ZU + 0.01);
   for (let x = -29.5; x <= 29.6; x += 3.1) { const l = new THREE.Mesh(new THREE.CircleGeometry(0.2, 14), lightMat); l.rotation.x = Math.PI / 2; l.position.set(x, SOF - 0.31, 83.6); SH.add(l); }
-  // raked concrete columns at the front, leaning out from the middle one; square columns behind
-  xs.slice(1, -1).forEach(x => {
-    const dx = Math.sign(x) * 1.0, h = SOF - 0.3 - GL, c = box(0.7, Math.hypot(dx, h), 0.85, concRough, x - dx / 2, GL + h / 2, 85.6, SH);
-    c.rotation.z = -Math.atan2(dx, h);
-  });
+  // concrete columns along the front; square columns behind
+  xs.slice(1, -1).forEach(x => box(0.7, SOF - 0.3 - GL, 0.85, concRough, x, (GL + SOF - 0.3) / 2, 85.6, SH));
   xs.forEach(x => box(0.6, SOF - 0.3 - GL, 0.6, greyBlue, x, (GL + SOF - 0.3) / 2, 81.8, SH));
   // curved louvre screen: horizontal slats on bronze ribs, broad bands at the ends running down to the ground
   const L0 = new THREE.Vector2(85.9, SOF - 0.1), L1 = new THREE.Vector2(89.9, 9.6), L2 = new THREE.Vector2(89.7, 16.4), L3 = new THREE.Vector2(84.3, roofUnder(84.3) - 0.15);
@@ -1266,58 +1393,48 @@ const SEAT_COUNTS = {
   };
   const path = (u, r0, r1, w = 3, y = 0.11) => { const [a0, b0] = pp(u, r0, A), [a1, b1] = pp(u, r1, A); roadSeg(a0, b0, a1, b1, w, mat.concrete, y, 10, S); };
   // gaps either end of the east stand, which is a section of its own (site photos): a dividing wall with the sector sign
-  // splits the gap, and each half has a switchback stair from the road up to its own stand's colonnade — a flight beside the
-  // dividing wall climbs in from the road to a landing, a second flight beside the stand climbs back out, and at the top you
-  // turn back onto the colonnade. The curved stand's side is on the left, the east stand's on the right, seen from the road.
-  // All of it sits inside the gap, behind the line of the stands' bases: from the road you walk in on the level for a few
-  // metres before the first flight. Past the stairs the dividing wall runs on a little, and the gate wall crosses the gap
-  // part-way to the pitch.
-  // Inside, past the stairs, the ground between the stands' ends runs to a wall across the front with a barred gate onto the
-  // field. Walls in striped grey tiles.
+  // splits the gap. In each half you walk in from the road on the level for a few metres, then a flight beside the dividing
+  // wall climbs to pitch level; from its top a flat floor runs on to the wall across the gap with the gate onto the field,
+  // and a flat walkway beside the stand leads out onto that stand's colonnade. The curved stand's side is on the left, the
+  // east stand's on the right, seen from the road. It all sits inside the gap, behind the line of the stands' bases; the
+  // dividing wall runs on a little past the flights. Walls in striped grey tiles.
   const stripeTex = canvasTex(64, 16, x => [['#d3d0c9', 0], ['#b1aea8', 16], ['#d3d0c9', 32], ['#9d9a94', 48]].forEach(([c, x0]) => { x.fillStyle = c; x.fillRect(x0, 0, 16, 16); }));
   const tiles = rep => { const t = stripeTex.clone(); t.needsUpdate = true; t.repeat.set(rep, rep); return M('tiles', 0xffffff, { map: t, side: DS }); };
   const steelPipe = M('pipe', 0xa9afb4, { metalness: 0.5, roughness: 0.4 });
-  const GW = (0.995 - 0.925) * 2 * A, yR = LOWR, yF = LOWR + 0.15, yT = 0.05, yM = (yF + yT) / 2, NS = 8, TR = 0.25;
-  // radii: road edge, line of the stands' bases, foot of the first flight, its top, the landing's inner edge, top of the second
-  const rRd = RR - 3.65, rE = RF + 0.33, r1 = rE - 3.0, r2 = r1 - NS * TR, rL = r2 - 1.35, r3 = rL + NS * TR;
-  const rD = rL - 2.5, rG = rD - 3.5;   // end of the dividing wall, the wall with the gate
-  const LA = 1.25, LB = GW / 2 - 0.12 - 0.15 - LA - 0.15;   // lane widths: first flight (by the dividing wall), second flight (by the stand)
+  const GW = (0.995 - 0.925) * 2 * A, yR = LOWR, yF = LOWR + 0.15, yT = 0.05, NS = 16, TR = 0.25;
+  // radii: road edge, line of the stands' bases, foot of the flight, its top (pitch level from here in), end of the dividing
+  // wall, the wall with the gate
+  const rRd = RR - 3.65, rE = RF + 0.33, r1 = rE - 3.0, r2 = r1 - NS * TR, rD = 66.48, rG = 62.98;
+  const LA = 1.25, LB = GW / 2 - 0.12 - 0.15 - LA - 0.15;   // lane widths: the flight (by the dividing wall), the walkway (by the stand)
   const tA = 0.15 + LA / 2, tS = 0.15 + LA + 0.075, tB = 0.15 + LA + 0.15 + LB / 2, tC = GW / 2 - 0.06;   // lane / wall centres from the gap's middle
-  const laneB = r => r <= rL ? yM : r < r3 ? yM + (yT - yM) * (r - rL) / (r3 - rL) : yT;   // height of the second lane
   const extr = (prof, x0, depth, m) => {
     const g = new THREE.ExtrudeGeometry(new THREE.Shape(prof.map(([r, y]) => new THREE.Vector2(r, y))), { depth, bevelEnabled: false }).rotateY(Math.PI / 2);
     const o = new THREE.Mesh(g, m); o.position.x = x0; o.castShadow = o.receiveShadow = true; S.add(o);
   };
   [0.04, 0.96].forEach(ug => {
     const gx = -A + 2 * A * ug, P = (r, t, y) => { const [x, z] = onRow(ug, r, t); return [x, y, z]; };
-    floorHoles.push([gx - GW / 2, -74.97, gx + GW / 2, -rL]);
-    // level apron from the road into the gap, running on between the walls to the first flight
+    floorHoles.push([gx - GW / 2, -74.97, gx + GW / 2, -r2]);   // the bowl's floor carries on, flat, from the flights' tops
+    // level apron from the road into the gap, running on between the walls to the flights
     placeAt(ug, (rE + rRd) / 2, 0, (yF + yR) / 2 + 0.01, GW, yF - yR, rRd - rE, mat.concrete);
     [-1, 1].forEach(s => placeAt(ug, (r1 + rE) / 2, s * tA, (yF + yR) / 2 + 0.01, LA, yF - yR, rE - r1, mat.concrete));
-    // dividing wall, its end in line with the stands' bases, carrying the sector sign; it runs on past the stairs
-    extr([[rD, yT], [rD, yT + 1.2], [rL, yT + 1.2], [r1, yF + 2.4], [rE, yF + 2.4], [rE, yR], [rL, yR], [rL, yT]], gx - 0.15, 0.3, tiles(1 / 2.4));
+    // dividing wall, its end in line with the stands' bases, carrying the sector sign; it runs on past the flights
+    extr([[rD, yT], [rD, yT + 1.2], [r2, yT + 1.2], [r1, yF + 2.4], [rE, yF + 2.4], [rE, yR], [r2, yR], [r2, yT]], gx - 0.15, 0.3, tiles(1 / 2.4));
     placePlane(ug, rE + 0.02, 0, yF + 1.5, 0.42, 0.74, sectorSign);
     [-1, 1].forEach(s => {
-      const rise1 = (yM - yF) / NS, rise2 = (yT - yM) / NS;
-      for (let i = 0; i < NS; i++) { const top = yF + (i + 1) * rise1; placeAt(ug, r1 - (i + 0.5) * TR, s * tA, (top + yR) / 2, LA, top - yR, TR + 0.02, mat.concrete); }   // first flight, climbing in
-      placeAt(ug, (rL + r2) / 2, s * (0.15 + (GW / 2 - 0.27) / 2), (yM + yR) / 2, GW / 2 - 0.27, yM - yR, r2 - rL, mat.concrete);   // landing across both lanes
-      for (let i = 0; i < NS; i++) { const top = yM + (i + 1) * rise2; placeAt(ug, rL + (i + 0.5) * TR, s * tB, (top + yR) / 2, LB, top - yR, TR + 0.02, mat.concrete); }   // second flight, climbing back out
-      placeAt(ug, (r3 + rE) / 2, s * tB, (yT + yR) / 2, LB, yT - yR, rE - r3, mat.concrete);   // top landing, beside the colonnade's end
-      placeAt(ug, rE - 0.02, s * tB, (yT + yR) / 2, LB + 0.2, yT - yR, 0.04, tiles(0.6));      // its face to the road, flush with the stands' bases
-      // wall between the lanes: the second lane's side, with a rail on top
-      extr([[r2, yR], [r2, laneB(r2)], [r3, yT], [rE, yT], [rE, yR]], gx + s * tS - 0.075, 0.15, tiles(1 / 2.4));
+      const rise = (yT - yF) / NS;
+      for (let i = 0; i < NS; i++) { const top = yF + (i + 1) * rise; placeAt(ug, r1 - (i + 0.5) * TR, s * tA, (top + yR) / 2, LA, top - yR, TR + 0.02, mat.concrete); }   // the flight, climbing in
+      // walkway beside the stand at pitch level, from the flight's top out to the colonnade's end; its face to the road is
+      // flush with the stands' bases
+      placeAt(ug, (r2 + rE) / 2, s * tB, (yT + yR) / 2, LB, yT - yR, rE - r2, mat.concrete);
+      placeAt(ug, rE - 0.02, s * tB, (yT + yR) / 2, LB + 0.2, yT - yR, 0.04, tiles(0.6));
+      // wall between the flight and the walkway, level with the walkway, with a guard rail on top
+      extr([[r2, yR], [r2, yT], [rE, yT], [rE, yR]], gx + s * tS - 0.075, 0.15, tiles(1 / 2.4));
+      bar3(P(r2, s * tS, yT + 1.0), P(rE, s * tS, yT + 1.0), 0.06, steelPipe);
+      [r2 + 0.1, (r2 + rE) / 2, rE - 0.1].forEach(r => placeAt(ug, r, s * tS, yT + 0.5, 0.06, 1.0, 0.06, steelPipe));
       // the stand's side: tiled wall up to the colonnade
-      extr([[rL, yR], [rL, 0.06], [rE, 0.06], [rE, yR]], gx + s * tC - 0.06, 0.12, tiles(1 / 2.4));
-      // inner edge of the landing: retaining wall up to the ground inside, with a rail
-      placeAt(ug, rL - 0.05, s * (0.15 + (GW / 2 - 0.27) / 2), (yR + yT) / 2, GW / 2 - 0.27, yT - yR, 0.1, tiles(0.6));
-      bar3(P(rL - 0.05, s * 0.3, yT + 1.0), P(rL - 0.05, s * (GW / 2 - 0.12), yT + 1.0), 0.06, steelPipe);
-      // rails on the wall between the lanes, and handrails up both flights; the top landing runs alongside the colonnade's
-      // end, open to it
-      bar3(P(r2, s * tS, laneB(r2) + 1.0), P(r3, s * tS, yT + 1.0), 0.06, steelPipe);
-      bar3(P(r3, s * tS, yT + 1.0), P(rE, s * tS, yT + 1.0), 0.06, steelPipe);
-      bar3(P(r1, s * 0.22, yF + 0.9), P(r2, s * 0.22, yM + 0.9), 0.05, steelPipe);   // handrails
-      bar3(P(rL, s * (tB + LB / 2 - 0.08), yM + 0.9), P(r3, s * (tB + LB / 2 - 0.08), yT + 0.9), 0.05, steelPipe);
-      placeAt(ug, rL - 1.3, s * (GW / 2 - 0.13), 1.1, 0.04, 2.1, 1.0, doorWhite);   // door into the rooms, inside
+      extr([[r2, yR], [r2, 0.06], [rE, 0.06], [rE, yR]], gx + s * tC - 0.06, 0.12, tiles(1 / 2.4));
+      bar3(P(r1, s * 0.22, yF + 0.9), P(r2, s * 0.22, yT + 0.9), 0.05, steelPipe);   // handrail up the flight
+      placeAt(ug, 67.7, s * (GW / 2 - 0.13), 1.1, 0.04, 2.1, 1.0, doorWhite);   // door into the rooms, inside
       placeAt(ug, RF + 0.36, s * (GW / 2 + 1.4), yF + 1.05, 1.0, 2.1, 0.04, doorWhite);   // door in the stand's base, off the road
     });
     // wall across the gap with the gate through to the field
@@ -1372,7 +1489,9 @@ function row(at, c0, c1, ns = false) {
 // main car park east of the stadium, wrapping round the bowl as a forecourt. Inside: north–south rows on an 18 m grid
 // (11 m of bays + 7 m aisle) with a 17 m spine between x 124 and 152 and 8 m cross aisles; each block only holds the
 // rows that clear the slanted east kerb by a full aisle, and a single row of bays lines that kerb.
-const CARPARK = satPoly([[520, 182], [1435, 182], [1478, 212], [1615, 1182], [520, 1192]]);
+// its south edge comes up to the boundary wall along the stadium's south side; west of the stadium it stays on the old line,
+// stepping out to it along the corner gate
+const CARPARK = [...satPoly([[520, 182], [1435, 182], [1478, 212]]), [CP_EAST, 129.9], [o5[0] - 0.2, 129.9], [-42.1, 139.5], sat(520, 1192)];
 flat(withOct(shapeFrom(CARPARK)), mat.asphalt, 0.05);
 CARPARK.forEach((p, i) => i < CARPARK.length - 1 && roadSeg(...p, ...CARPARK[i + 1], 0.8, mat.concrete, 0.055, 10));   // kerb (west edge below, round the west lot)
 [[-154, -84, [106, 124, 152]],
@@ -1392,7 +1511,7 @@ row(70, -154, -122, true); row(88, -154, -104, true);   // short rows tucked aga
 // the north side; tree islands and a small roundabout island, as on the as-built layout
 const LOT91 = [[-146.5, -49.2], [-105.8, -49.2], [-105.8, 56.5], [-146.5, 56.5]];
 flat(shapeFrom(LOT91), mat.asphalt, 0.052);
-roadSeg(CARPARK[0][0], 57.3, CARPARK[0][0], CARPARK[4][1], 0.8, mat.concrete, 0.055, 10);
+roadSeg(CARPARK[0][0], 57.3, CARPARK[0][0], CARPARK.at(-1)[1], 0.8, mat.concrete, 0.055, 10);
 roadSeg(CARPARK[0][0], -52, CARPARK[0][0], CARPARK[0][1], 0.8, mat.concrete, 0.055, 10);   // rest of the car park's west kerb
 const islandTrees = [];
 roadSeg(-143, 49.4, -143, -22.3, 5, lineBayMat, 0.058, 10);                       // back row
@@ -1417,10 +1536,6 @@ lampPos.push([-141.4, -46.6], [-121.1, -46.6]);
     for (let t = 0; t <= len; t += 3) box(0.1, 1.9, 0.1, mat.steel, a[0] + (b[0] - a[0]) * t / len, 0.95, a[1] + (b[1] - a[1]) * t / len);
   });
 }
-// smaller lot across Academic Freedom Rd
-const NORTH_LOT = satPoly([[548, -10], [895, -10], [895, 80], [548, 80]]);
-flat(shapeFrom(NORTH_LOT), mat.asphalt, 0.05);
-row(-207.6, -96, 0);
 // paved walk running south past the warm-up track
 const WALK = satPoly([[630, 1180], [705, 1180], [700, 1600], [625, 1600]]);
 flat(shapeFrom(WALK), mat.concrete, 0.06);
@@ -1449,7 +1564,7 @@ roadSeg(...HW[0], ...HW[1], 34, hwMat, 0.06, 12);
 road(JJ, 10);
 const AFR = satPoly([[-1500, 560], [0, 215], [300, 135], [470, 108], [1060, 150], [1525, 102], [3000, 40]]);   // Academic Freedom Rd
 const NUR = satPoly([[505, 112], [505, 563]]);   // New University Rd, ends at the grandstand car park's entry/exit
-const LINKS = [satPoly([[505, 540], [250, 540], [250, 685], [40, 690]]), satPoly([[1065, 150], [1065, 192]])];
+const LINKS = [satPoly([[505, 540], [250, 540], [250, 685], [40, 690]])];
 road(AFR, 11); road(NUR, 10); LINKS.forEach(l => road(l, 8, mat.asphalt, 0.055));
 // forecourt north-west of the stadium: a two-lane access road off New University Rd, joined by a second in/out lane,
 // runs along the north of the bowl into the car park, with a link to the first vehicle gate. Walled off from the road.
@@ -1475,6 +1590,47 @@ roadSeg(-85, CARPARK[0][1] + 3.3, 46, CARPARK[0][1] + 3.3, 5.5, lineBayMat, 0.05
   roadSeg(...P(0.15), ...P(0.85), 5.5, lineBayMat, 0.058, 10);
 }
 roadSeg(...sat(700, 1225), ...sat(1715, 1215), 6, mat.earth, 0.03, 10);   // dirt track south of the car park
+// roads south-west of the stadium, off the site layout drawing (8 m, two-way): one comes up past the warm-up track to the
+// south-west corner, where a gate closes it, and runs on outside the south-west diagonal; a branch runs east along the
+// south of the car park and turns up through the boundary wall into the car park, with a spur up a ramp to G1.
+// ponytail: drawing anchored on our south-west corner (its boundary sits ~13 m further south); nudge the points if off
+function ribbon(pts, w, y, yOf) {   // smooth road through pts, lines in 12 m tiles; yOf(x, z), if given, sets its own levels
+  const cv = new THREE.CatmullRomCurve3(pts.map(([x, z]) => new THREE.Vector3(x, 0, z)), false, 'centripetal'), len = cv.getLength();
+  const n = Math.ceil(len / 1.5), C = cv.getSpacedPoints(n).map(p => [p.x, p.z]), L = [], R = [], pos = [], uv = [], idx = [];
+  C.forEach(([x, z], i) => {
+    const [ax, az] = C[Math.max(0, i - 1)], [bx, bz] = C[Math.min(n, i + 1)], l = Math.hypot(bx - ax, bz - az) * 2 / w;
+    L.push([x - (bz - az) / l, z + (bx - ax) / l]); R.push([x + (bz - az) / l, z - (bx - ax) / l]);
+    [L[i], R[i]].forEach(([px, pz], k) => { pos.push(px, yOf ? yOf(px, pz) : 0, pz); uv.push(i * len / n / 12, k); });
+    if (i) idx.push(2 * i - 2, 2 * i, 2 * i - 1, 2 * i - 1, 2 * i, 2 * i + 1);
+  });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, roadMat); m.position.y = y; m.receiveShadow = true; m.userData.lvl = !!yOf; scene.add(m);
+  return { C, L, R, w };
+}
+const SW_MAIN = [[-130, 251.3], [-97.4, 233.1], [-75.2, 211.3], [-52.1, 193.6], [-44.6, 186.6], [-40.2, 176], [-36.9, 165.2], [-35.7, 151.5], [-37.6, 138.4], [-49.5, 126.5], [-88, 88]];
+const SW_EAST = [[-43, 181.5], [-33.6, 177], [-22.9, 167.2], [-12.4, 159.2], [-4.9, 153.6], [4.6, 149.9], [16.2, 147.7], [27.5, 148.1], [41, 148.7], [48.6, 146.6], [SPUR_X - 0.4, 141.5], [SPUR_X, 133], [SPUR_X, o4[1]], [SPUR_X + 1.2, 124.5], [SPUR_X + 5, 120], [SPUR_X + 11, 117.2]];
+const G1_SPUR = [[25.4, 148.1], [25.4, o4[1]]];
+const SW_ROADS = [SW_MAIN, SW_EAST, G1_SPUR];
+{
+  const main = ribbon(SW_MAIN, 8, 0.074), east = ribbon(SW_EAST, 8, 0.07);
+  // up the 1.5 m from the car park to the paving inside G1 over the last 13 m
+  const z0 = 142.5, k = z => { const t = Math.min(1, Math.max(0, (z0 - z) / (z0 - o4[1]))); return t * t * (3 - 2 * t); };
+  const ramp = (x, z) => Hout(x) + 0.068 + (Hin(x, o4[1]) + 0.087 - Hout(x)) * k(z), spur = ribbon(G1_SPUR, 8, 0, ramp);
+  [spur.L, spur.R].forEach(E => {   // the ramp's sides, down to the ground
+    const pos = [];
+    E.slice(1).forEach(([x, z], i) => { const [px, pz] = E[i]; pos.push(px, Hout(px), pz, x, Hout(x), z, px, ramp(px, pz), pz, px, ramp(px, pz), pz, x, Hout(x), z, x, ramp(x, z), z); });
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+    const o = new THREE.Mesh(g, mat.concrete); o.userData.lvl = true; scene.add(o);
+  });
+  const mouth = (main, br) => {   // plain asphalt over the main road's kerb line where a branch leaves it
+    const d = ([x, z]) => Math.min(...main.C.map(([cx, cz]) => Math.hypot(x - cx, z - cz))) - main.w / 2;
+    const cut = (E, t) => { const i = E.findIndex(p => d(p) >= t); if (i < 1) return E[0]; const a = d(E[i - 1]) - t, f = a / (a - d(E[i]) + t); return [E[i - 1][0] + (E[i][0] - E[i - 1][0]) * f, E[i - 1][1] + (E[i][1] - E[i - 1][1]) * f]; };
+    flat(shapeFrom([cut(br.L, -1), cut(br.L, 1.5), cut(br.R, 1.5), cut(br.R, -1)]), mat.asphalt, 0.078);
+  };
+  mouth(main, east); mouth(east, spur);
+  [[-36.6, 130.6], [-45.4, 144.5]].forEach(([x, z]) => box(0.9, 3, 0.9, mat.white, x, 1.5, z));   // gate posts across the road at the corner
+}
 
 // ---------- buildings
 function prism(w, l, h, material) {
@@ -1513,11 +1669,11 @@ const inStad = (x, z, a, r) => Math.hypot(Math.max(Math.abs(x) - a, 0), z) < r;
 const inPoly = (x, z, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, zi] = P[i], [xj, zj] = P[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
 const segDist = (x, z, [ax, az], [bx, bz]) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz))); return Math.hypot(x - ax - t * dx, z - az - t * dz); };
 function free(x, z) {
-  if ([CARPARK, LOT91, OCT, NORTH_LOT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
+  if ([CARPARK, LOT91, OCT, WALK, EARTH, POOL, COURTS].some(P => inPoly(x, z, P))) return false;
   const dx = x - W.x, dz = z - W.z, c = Math.cos(W.rot), s = Math.sin(W.rot);
   if (inStad(dx * c - dz * s, dx * s + dz * c, A, 62)) return false;
   if (x > hwX(z) - 48 && x < hwX(z) + 24) return false;   // highway + service road
-  for (const [P, w] of [[AFR, 11], [NUR, 10], ...LINKS.map(l => [l, 8])])
+  for (const [P, w] of [[AFR, 11], [NUR, 10], ...LINKS.map(l => [l, 8]), ...SW_ROADS.map(l => [l, 8])])
     for (let i = 1; i < P.length; i++) if (segDist(x, z, P[i - 1], P[i]) < w / 2 + 4) return false;
   return !builtRects.some(([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1);
 }
@@ -1555,8 +1711,9 @@ treePts.push(...islandTrees);
 }
 
 // ---- yards in the corners beside the grandstand ends, at road level against the boundary wall, which retains the higher
-// ground behind (site photos). North-west: a shaded car port, a stair up to a gate, generators and fuel tanks behind mesh
-// fences. South-west: the two 40 ft storage containers. A mural runs along the wall behind both. Built at pitch level;
+// ground behind (site photos). North-west: three pedestrian gates in the wall, each with a flight straight down into the
+// yard; between the first and second, a double car port under a blue shade canopy with the two fuel tanks in a fenced pen
+// beside it; between the second and third, generators behind a mesh fence. South-west: the two 40 ft storage containers. A mural runs along the wall behind both. Built at pitch level;
 // the levelling pass below lowers them with the ground.
 {
   const inward = (a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz); let nx = -dz / L, nz = dx / L; if (nx * (a[0] + b[0]) + nz * (a[1] + b[1]) > 0) { nx = -nx; nz = -nz; } return [nx, nz]; };
@@ -1595,39 +1752,53 @@ treePts.push(...islandTrees);
     m.position.set(x, 1.8, z); m.rotation.y = Math.atan2(nx, nz); scene.add(m);
   };
   const wNW = [o7[0], -67.4], wSW = [o6[0], 67.4];
-  mural(wNW, o7, 0, Math.hypot(o7[0] - wNW[0], o7[1] - wNW[1])); mural(o7, o0, 0, 3.2); mural(o7, o0, 6.2, 40);
+  mural(wNW, o7, 0, Math.hypot(o7[0] - wNW[0], o7[1] - wNW[1])); mural(o7, o0, 0, 9.5); mural(o7, o0, 12.5, 32.5); mural(o7, o0, 35.5, 46);
   mural(wSW, o6, 0, Math.hypot(o6[0] - wSW[0], o6[1] - wSW[1])); mural(o6, o5, 0, 40);
 
-  // north-west: car port with three bays against the west wall, under a blue shade sail
-  roadSeg(o7[0] + 2.6, -68, o7[0] + 2.6, -76.6, 5, lineBayMat, 0.1, 10);
-  { const sail = box(9.2, 0.06, 5.8, M('shadeSail', 0x2f6fd0, { side: DS }), o7[0] + 2.9, 3.1, -72.3); sail.rotation.x = 0.06; sail.rotation.z = -0.05; sail.castShadow = true;
-    [[0.3, -67.9], [0.3, -76.7], [5.6, -67.9], [5.6, -76.7]].forEach(([dx, z]) => box(0.12, 3.1, 0.12, mat.steel, o7[0] + dx, 1.55, z)); }
-  // stair up to the gate in the wall
-  const [gx, gz] = pt(o7, o0, 4.7, 0), [ix, iz] = pt(o7, o0, 4.7, 1.6), H = Hout(gx) - Hin(ix, iz), nSt = Math.ceil(H / 0.175), rs = H / nSt;
-  along3(o7, o0, 4.75, 1.35, 2.9, H, 2.7, mat.concrete);   // landing
-  for (let i = 0; i < nSt - 1; i++) {
-    const top = H - (i + 1) * rs, d = 6.2 + (i + 0.5) * 0.3;
-    along3(o7, o0, d, 1.6, 0.32, top, 2.2, mat.concrete);
-    along3(o7, o0, d, 2.8, 0.32, top + 0.9, 0.2, boundaryConc);   // stepped side wall
-  }
-  [3.3, 6.1].forEach(d => along3(o7, o0, d, 0.1, 0.4, H + 2.4, 0.4, boundaryConc));   // gate piers
-  { const [x, z] = pt(o7, o0, 4.7, 0.06), g = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.1), sideGateMat); g.position.set(x, H + 1.15, z); g.rotation.y = ang(o7, o0); scene.add(g); }
-  // generators and fuel tanks behind mesh fences, on concrete pads
+  // north-west: between the first and second gates, a double car port (two bays square to the wall) under a blue shade
+  // canopy, and beside it the two fuel tanks end to end along the wall in a fenced pen
   const genMat = M('genset', 0xa3a8ac), genDark = M('gensetDark', 0x4d5257), tankMat = M('fuelTank', 0xd9dcdd, { metalness: 0.4, roughness: 0.4 });
-  along3(o7, o0, 20, 1.7, 12.6, 0.15, 3.2, mat.concrete);
-  [16.8, 22.9].forEach(d => {
-    along3(o7, o0, d, 1.6, 5.2, 2.5, 2.3, genMat, 1.4);
-    along3(o7, o0, d - 1.2, 2.77, 1.4, 1.6, 0.04, genDark, 1.3);   // louvred door panels
-    along3(o7, o0, d + 1.0, 2.77, 1.4, 1.6, 0.04, genDark, 1.3);
+  along3(o7, o0, 17, 2.2, 6.2, 0.15, 4.4, mat.concrete);
+  [14.1, 17, 19.9].forEach(dd => along3(o7, o0, dd, 2.3, 0.1, 0.02, 4.0, mat.white, 0.16));   // bay lines
+  { const sail = along3(o7, o0, 17, 2.2, 6.6, 0.06, 4.6, M('shadeSail', 0x2f6fd0, { side: DS }), 3.0); sail.castShadow = true;
+    [[13.9, 0.2], [20.1, 0.2], [13.9, 4.2], [20.1, 4.2]].forEach(([dd, o]) => along3(o7, o0, dd, o, 0.12, 3.0, 0.12, mat.steel)); }
+  along3(o7, o0, 27.4, 1.5, 10.2, 0.15, 2.8, mat.concrete);
+  [25, 29.8].forEach(dd => {
+    const [x, z] = pt(o7, o0, dd, 1.4), tk = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 4.6, 18), tankMat);
+    tk.rotation.order = 'YZX'; tk.rotation.y = ang(o7, o0); tk.rotation.z = Math.PI / 2; tk.position.set(x, 1.2, z); tk.castShadow = true; scene.add(tk);
+    [-1.5, 1.5].forEach(e => along3(o7, o0, dd + e, 1.4, 0.3, 0.5, 1.2, mat.concrete, 0.25));   // saddles
   });
-  fenceRun(o7, o0, 13.8, 26.2, 3.3);
-  along3(o7, o0, 31, 1.3, 10.6, 0.15, 2.4, mat.concrete);
-  [28.4, 33.6].forEach(d => {
-    const [x, z] = pt(o7, o0, d, 1.25), t = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 4.4, 18), tankMat);
-    t.rotation.order = 'YZX'; t.rotation.y = ang(o7, o0); t.rotation.z = Math.PI / 2; t.position.set(x, 1.2, z); t.castShadow = true; scene.add(t);
-    [-1.4, 1.4].forEach(e => along3(o7, o0, d + e, 1.25, 0.3, 0.5, 1.2, mat.concrete, 0.25));   // saddles
+  fenceRun(o7, o0, 22.4, 32.4, 3.0, 1.8);
+  // pedestrian gates: a barred gate in the wall at the higher ground's level, and a flight straight down into the yard
+  // between stepped side walls with handrails
+  YARD_GATES.forEach(d => {
+    const [gx] = pt(o7, o0, d, 0), [ix, iz] = pt(o7, o0, d, 1.2), H = Math.max(0.15, Hout(gx) - Hin(ix, iz));
+    const n = Math.max(1, Math.round(H / 0.172)), rs = H / n;
+    const room = roadEdge(ix, iz).gap + 1.2, tr = n > 1 ? Math.max(0.25, Math.min(0.3, (room - 0.9) / (n - 1))) : 0.3;   // fit the flight inside the yard where it's narrow
+    along3(o7, o0, d, 0.35, 2.4, H, 0.5, mat.concrete);   // top step, under the gate
+    for (let i = 1; i < n; i++) along3(o7, o0, d, 0.6 + (i - 0.5) * tr, 2.4, H - i * rs, tr + 0.02, mat.concrete);
+    const run = 0.6 + (n - 1) * tr;
+    [-1.35, 1.35].forEach(e => {
+      for (let i = 0; i < n; i++) along3(o7, o0, d + e, 0.35 + i * tr, 0.25, H - i * rs + 0.9, tr + 0.02, boundaryConc);   // stepped side wall
+      const a = pt(o7, o0, d + e * 0.9, 0.35), b = pt(o7, o0, d + e * 0.9, run);
+      const P = new THREE.Vector3(a[0], H + 0.9, a[1]), Q = new THREE.Vector3(b[0], 0.9 + rs, b[1]), r = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, P.distanceTo(Q), 6), mat.steel);
+      r.position.copy(P).add(Q).multiplyScalar(0.5); r.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), Q.clone().sub(P).normalize()); scene.add(r);
+    });
+    [-1.45, 1.45].forEach(e => along3(o7, o0, d + e, 0.1, 0.4, H + 2.4, 0.4, boundaryConc));   // gate piers
+    // two barred leaves, swung open outwards onto the higher ground
+    [-1, 1].forEach(e => {
+      const [x, z] = pt(o7, o0, d + e * 1.18, -0.66), g = new THREE.Mesh(new THREE.PlaneGeometry(1.24, 2.1), sideGateMat);
+      g.position.set(x, Hout(x) + 1.15, z); g.rotation.y = ang(o7, o0) + Math.PI / 2; g.userData.lvl = true; scene.add(g);
+    });
   });
-  fenceRun(o7, o0, 25.8, 36.2, 2.3);
+  // generators behind a mesh fence, on a concrete pad, between the second and third gates
+  along3(o7, o0, 47, 1.5, 12.4, 0.15, 2.7, mat.concrete);
+  [44, 50].forEach(dd => {
+    along3(o7, o0, dd, 1.45, 5.2, 2.5, 2.2, genMat, 1.4);
+    along3(o7, o0, dd - 1.2, 2.56, 1.4, 1.6, 0.04, genDark, 1.3);   // louvred door panels
+    along3(o7, o0, dd + 1.0, 2.56, 1.4, 1.6, 0.04, genDark, 1.3);
+  });
+  fenceRun(o7, o0, 40.8, 53.2, 2.9);
 
   // south-west: the two storage containers end to end along the wall
   const contMat = M('container', 0xe9e7e0, { roughness: 0.7 }), contTrim = M('containerTrim', 0x2f8a4a);
@@ -1638,7 +1809,7 @@ treePts.push(...islandTrees);
 // with the ground under it
 function drapeGeo(g, Mx) {
   let tris = trisOf(g, Mx);
-  [LX0, LX1].forEach(X => { tris = splitTris(tris, X); });
+  HK.forEach(([X]) => { tris = splitTris(tris, X); });
   const inside = t => inPolyW((t[0].v.x + t[1].v.x + t[2].v.x) / 3, (t[0].v.z + t[1].v.z + t[2].v.z) / 3, OCT);
   if (tris.some(inside)) tris = subdivTris(tris, 3);
   const ng = fromTris(tris, t => inside(t) ? Hin : x => Hout(x), Mx.clone().invert()); g.dispose(); return ng;
@@ -1668,7 +1839,6 @@ const LABELS = [
   { t: 'South Stand', p: [0, 14, A + SR1 - 4], cam: [0, 38, 15] },
   { t: 'Warm-up Track', p: [W.x, 4, W.z], d: 280 },
   { t: 'Car Park', p: at(1390, 650, 10), d: 340 },
-  { t: 'North Car Park', p: at(720, 35, 4), d: 240 },
   { t: 'Grandstand Car Park', p: [-127, 4, 18], d: 220 },
   { t: 'Legon East Rd', p: [hwX(-250), 2, -250], d: 360, sm: true },
   { t: 'Academic Freedom Rd', p: at(300, 135, 2), d: 300, sm: true },
@@ -1776,7 +1946,7 @@ function setPen(on) {
   pen.on = on; tD.classList.toggle('on', on); penBar.classList.toggle('open', on); document.body.classList.toggle('drawing', on);
   controls.mouseButtons = on ? { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE } : defaultButtons;
   controls.touches = on ? { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE } : defaultTouches;
-  document.getElementById('hint').textContent = on ? 'Left-drag to draw · Right-drag to orbit · Scroll to zoom' : 'Drag to orbit · Right-drag to pan · Scroll to zoom';
+  document.getElementById('hint').textContent = on ? 'Left-drag to draw · Right-drag to orbit · Scroll to zoom' : 'Drag to orbit · Right-drag to pan · Scroll to zoom · Double-click to pivot there · Arrows / WASD to move';
 }
 tD.onclick = () => setPen(!pen.on);
 document.getElementById('pDone').onclick = () => setPen(false);
@@ -1785,13 +1955,54 @@ penBar.querySelectorAll('.sz').forEach(b => b.onclick = () => { pen.size = +b.da
 document.getElementById('pUndo').onclick = () => { const s = strokes.pop(); if (s && s.mesh) { strokesG.remove(s.mesh); s.mesh.geometry.dispose(); } save(); };
 document.getElementById('pClear').onclick = () => { strokes.forEach(s => { if (s.mesh) { strokesG.remove(s.mesh); s.mesh.geometry.dispose(); } }); strokes = []; save(); };
 addEventListener('keydown', e => { if (pen.on && (e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); document.getElementById('pUndo').click(); } });
+// ---------- camera: double-click anything to make it the pivot (and move in on it); arrows / WASD slide the view
+// along the ground, Q / E raise and lower it; a dot marks the pivot while you move
+const pivotDot = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: 0xe0362c, depthTest: false, transparent: true, opacity: 0 }));
+pivotDot.renderOrder = 999; scene.add(pivotDot);
+let pivotShow = 0;
+const showPivot = () => { pivotShow = performance.now(); };
+controls.addEventListener('change', showPivot);
+cvs.addEventListener('dblclick', e => {
+  if (pen.on) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const shown = o => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+  const h = ray.intersectObjects(pickables, true).find(i => i.object.isMesh && shown(i.object));
+  if (!h) return;
+  const dir = camera.position.clone().sub(controls.target), d = Math.min(dir.length(), Math.max(12, dir.length() * 0.5));
+  tweenTo(h.point.clone().add(dir.normalize().multiplyScalar(d)).toArray(), h.point.toArray(), 700);
+  bar.querySelectorAll('[data-view]').forEach(x => x.classList.remove('on'));
+});
+const held = new Set();
+addEventListener('keydown', e => { if (!e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) held.add(e.key.toLowerCase()); });
+addEventListener('keyup', e => held.delete(e.key.toLowerCase()));
+addEventListener('blur', () => held.clear());
+let lastT = performance.now();
+function keyMove() {
+  const now = performance.now(), dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+  if (!held.size) return;
+  const has = (...k) => k.some(x => held.has(x));
+  const fwd = new THREE.Vector3().subVectors(controls.target, camera.position).setY(0).normalize(), right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+  const sp = Math.max(4, camera.position.distanceTo(controls.target) * 0.8) * dt * (held.has('shift') ? 3 : 1), m = new THREE.Vector3();
+  if (has('arrowup', 'w')) m.add(fwd); if (has('arrowdown', 's')) m.sub(fwd);
+  if (has('arrowright', 'd')) m.add(right); if (has('arrowleft', 'a')) m.sub(right);
+  if (has('q')) m.y += 1; if (has('e')) m.y -= 1;
+  if (!m.lengthSq()) return;
+  anim = null; m.normalize().multiplyScalar(sp);
+  camera.position.add(m); controls.target.add(m); showPivot();
+}
 renderer.setAnimationLoop(() => {
   if (anim) {
     let k = Math.min(1, (performance.now() - anim.s) / anim.dur); const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
     camera.position.lerpVectors(anim.p0, anim.p1, e); controls.target.lerpVectors(anim.t0, anim.t1, e);
     if (k >= 1) anim = null;
   }
-  controls.update(); renderer.render(scene, camera); updateLabels();
+  keyMove(); controls.update();
+  const age = (performance.now() - pivotShow) / 1000;   // pivot dot fades out a second after the view stops moving
+  pivotDot.material.opacity = age < 0.6 ? 0.9 : Math.max(0, 0.9 - (age - 0.6) * 2);
+  pivotDot.position.copy(controls.target); pivotDot.scale.setScalar(camera.position.distanceTo(controls.target) * 0.006);
+  renderer.render(scene, camera); updateLabels();
 });
 </script>
 </body>
